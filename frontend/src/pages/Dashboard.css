@@ -68,7 +68,7 @@
 }
 
 /*3. sidebar styling */
-.sidebar-brand, .replica-sidebar nav a, .sidebar-bottom button {
+.sidebar-brand, .replica-sidebar nav a, .sidebar-bottom a, .sidebar-bottom button {
   display: grid;
   width: 46px;
   height: 46px;
@@ -101,8 +101,9 @@
 .replica-sidebar nav a:hover, .replica-sidebar nav a:focus-visible { color: #fff; background: rgba(255, 255, 255, .1); }
 .replica-sidebar nav a.active { background: #ff6a35; color: #fff; box-shadow: 0 0 0 2px rgba(255, 106, 53, .2), 0 8px 18px rgba(255, 94, 43, .3); }
 .sidebar-bottom { display: flex; flex-direction: column; gap: 6px; margin-top: auto; padding: 7px 4px; border-radius: 24px; background: rgba(255, 235, 215, .12); }
-.sidebar-bottom button { width: 44px; height: 44px; font-size: .95rem; }
-.sidebar-bottom button:not(:disabled):hover { background: rgba(255, 255, 255, .1); color: #fff; }
+.sidebar-bottom a, .sidebar-bottom button { width: 44px; height: 44px; font-size: .95rem; }
+.sidebar-bottom a:hover, .sidebar-bottom a:focus-visible, .sidebar-bottom button:not(:disabled):hover { background: rgba(255, 255, 255, .1); color: #fff; }
+.sidebar-bottom a.active { background: #ff6a35; color: #fff; box-shadow: 0 0 0 2px rgba(255, 106, 53, .2), 0 8px 18px rgba(255, 94, 43, .3); }
 .sidebar-bottom button:disabled { cursor: default; opacity: 1; }
 
 .replica-main { position: relative; min-width: 0; padding: 16px 20px 20px 12px; }

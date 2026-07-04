@@ -21,6 +21,7 @@ export const DashboardSidebar = () => {
     { path: '/tasks', label: 'Tasks', icon: FaTasks },
     { path: '/schedule', label: 'Schedule', icon: FaCalendarAlt },
   ];
+  const settingsActive = location.pathname === '/settings';
 
   const handleLogout = () => {
     logout();
@@ -54,14 +55,15 @@ export const DashboardSidebar = () => {
         })}
       </nav>
       <div className="sidebar-bottom">
-        <button
-          type="button"
-          disabled
-          aria-label="Settings coming soon"
-          title="Settings coming soon"
+        <Link
+          to="/settings"
+          className={settingsActive ? 'active' : ''}
+          aria-label="Settings"
+          aria-current={settingsActive ? 'page' : undefined}
+          title="Settings"
         >
           <FaCog aria-hidden="true" />
-        </button>
+        </Link>
         <button
           type="button"
           onClick={handleLogout}
