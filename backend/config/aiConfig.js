@@ -14,6 +14,8 @@ const getAISchedulingConfig = () => {
 
   return {
     enabled,
+    providerName: (process.env.AI_PROVIDER_NAME || 'generic').trim(),
+    providerUrl: (process.env.AI_PROVIDER_URL || '').trim(),
     apiKey,
     model: (process.env.AI_MODEL || '').trim(),
     maxTokens: parsePositiveInteger(
@@ -29,7 +31,7 @@ const getAISchedulingConfig = () => {
 
 const isAISchedulingConfigured = () => {
   const config = getAISchedulingConfig();
-  return config.enabled && Boolean(config.apiKey);
+  return config.enabled && Boolean(config.apiKey && config.model && config.providerUrl);
 };
 
 module.exports = {
