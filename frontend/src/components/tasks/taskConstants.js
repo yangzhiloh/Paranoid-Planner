@@ -28,6 +28,16 @@ export const URGENCY_STYLES = {
 
 export const TASK_TYPES = ['Assignment', 'Quiz', 'Project', 'Reading', 'Revision', 'Exam', 'Other'];
 
+const GUIDED_TASK_TYPE_METADATA = {
+    Assignment: 'assignment',
+    Quiz: 'quiz',
+    Project: 'project',
+    Reading: 'reading',
+    Revision: 'exam_revision',
+    Exam: 'exam_revision',
+    Other: 'other'
+};
+
 export const TASK_COLUMNS = [
     {
         title: 'To Do',
@@ -105,6 +115,7 @@ export const buildGuidedTaskPayload = (guided, modules) => {
         deadline: guided.deadline,
         priority: URGENCY_PRIORITY[guided.urgency] ?? 3,
         estimated_minutes: estimated,
+        task_type: GUIDED_TASK_TYPE_METADATA[guided.taskType] || 'other',
         status: 'pending'
     };
 };

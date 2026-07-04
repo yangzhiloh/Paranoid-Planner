@@ -4,6 +4,121 @@ const {
   reverseTaskCompletion,
 } = require('../services/pointsService');
 
+const VALID_TASK_TYPES = [
+  'assignment',
+  'quiz',
+  'exam_revision',
+  'lecture_review',
+  'tutorial_prep',
+  'project',
+  'reading',
+  'other',
+];
+
+const VALID_DIFFICULTIES = ['easy', 'medium', 'hard'];
+
+const DEFAULT_SCHEDULING_METADATA = {
+  task_type: 'assignment',
+  difficulty: 'medium',
+  requires_revision: false,
+  revision_sessions_needed: 0,
+  min_session_minutes: 30,
+  max_session_minutes: 120,
+};
+
+const TASK_RETURN_FIELDS = `
+  id, user_id, module_id, title, description, deadline, estimated_minutes,
+  priority, status, preferred_start_time, preferred_end_time, task_type,
+  difficulty, requires_revision, revision_sessions_needed,
+  min_session_minutes, max_session_minutes, ai_estimated_minutes,
+  schedule_notes, created_at, updated_at
+`;
+
+const parseIntegerField = (value, fieldName, { nullable = false } = {}) => {
+  if (value === undefined) return { exists: false };
+  if (value === null || value === '') {
+    return nullable ? { exists: true, value: null } : { error: `${fieldName} is required when provided` };
+  }
+
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed)) {
+    return { error: `${fieldName} must be an integer` };
+  }
+
+  return { exists: true, value: parsed };
+};
+
+const validateTaskSchedulingMetadata = (body, existingValues = {}) => {
+  const values = {};
+
+  if (body.task_type !== undefined) {
+    if (!VALID_TASK_TYPES.includes(body.task_type)) {
+      return { error: `Task type must be one of: ${VALID_TASK_TYPES.join(', ')}` };
+    }
+    values.task_type = body.task_type;
+  }
+
+  if (body.difficulty !== undefined) {
+    if (!VALID_DIFFICULTIES.includes(body.difficulty)) {
+      return { error: `Difficulty must be one of: ${VALID_DIFFICULTIES.join(', ')}` };
+    }
+    values.difficulty = body.difficulty;
+  }
+
+  if (body.requires_revision !== undefined) {
+    if (typeof body.requires_revision !== 'boolean') {
+      return { error: 'Requires revision must be a boolean' };
+    }
+    values.requires_revision = body.requires_revision;
+  }
+
+  const integerRules = [
+    ['revision_sessions_needed', 'Revision sessions needed', { min: 0 }],
+    ['min_session_minutes', 'Minimum session minutes', { min: 15 }],
+    ['max_session_minutes', 'Maximum session minutes', { max: 240 }],
+    ['ai_estimated_minutes', 'AI estimated minutes', { min: 1, nullable: true }],
+  ];
+
+  for (const [field, label, rule] of integerRules) {
+    const parsed = parseIntegerField(body[field], label, { nullable: rule.nullable });
+    if (parsed.error) return { error: parsed.error };
+    if (!parsed.exists) continue;
+
+    if (parsed.value !== null) {
+      if (rule.min !== undefined && parsed.value < rule.min) {
+        return { error: `${label} must be at least ${rule.min}` };
+      }
+      if (rule.max !== undefined && parsed.value > rule.max) {
+        return { error: `${label} must be no more than ${rule.max}` };
+      }
+    }
+
+    values[field] = parsed.value;
+  }
+
+  const nextMin =
+    values.min_session_minutes ??
+    existingValues.min_session_minutes ??
+    DEFAULT_SCHEDULING_METADATA.min_session_minutes;
+  const nextMax =
+    values.max_session_minutes ??
+    existingValues.max_session_minutes ??
+    DEFAULT_SCHEDULING_METADATA.max_session_minutes;
+
+  if (Number(nextMin) > Number(nextMax)) {
+    return { error: 'Minimum session minutes must not exceed maximum session minutes' };
+  }
+
+  if (body.schedule_notes !== undefined) {
+    if (body.schedule_notes !== null && typeof body.schedule_notes !== 'string') {
+      return { error: 'Schedule notes must be text' };
+    }
+    values.schedule_notes = body.schedule_notes?.trim() || null;
+  }
+
+  return { values };
+};
+
 /* Get all tasks for the current user
  *
  * Query params:
@@ -22,7 +137,10 @@ const getTasks = async (req, res) => {
       SELECT
         t.id, t.user_id, t.module_id, t.title, t.description,
         t.deadline, t.estimated_minutes, t.priority, t.status,
-        t.preferred_start_time, t.preferred_end_time, t.created_at, t.updated_at,
+        t.preferred_start_time, t.preferred_end_time, t.task_type,
+        t.difficulty, t.requires_revision, t.revision_sessions_needed,
+        t.min_session_minutes, t.max_session_minutes, t.ai_estimated_minutes,
+        t.schedule_notes, t.created_at, t.updated_at,
         m.module_code, m.module_name, m.color
       FROM tasks t
       LEFT JOIN modules m ON t.module_id = m.id
@@ -66,7 +184,15 @@ const createTask = async (req, res) => {
       estimated_minutes,
       priority,
       preferred_start_time,
-      preferred_end_time
+      preferred_end_time,
+      task_type,
+      difficulty,
+      requires_revision,
+      revision_sessions_needed,
+      min_session_minutes,
+      max_session_minutes,
+      ai_estimated_minutes,
+      schedule_notes
     } = req.body;
 
     // Validate required inputs
@@ -121,6 +247,28 @@ const createTask = async (req, res) => {
       return res.status(400).json({ error: 'Preferred end time must be in HH:MM or HH:MM:SS format' });
     }
 
+    const metadataValidation = validateTaskSchedulingMetadata({
+      task_type,
+      difficulty,
+      requires_revision,
+      revision_sessions_needed,
+      min_session_minutes,
+      max_session_minutes,
+      ai_estimated_minutes,
+      schedule_notes,
+    });
+
+    if (metadataValidation.error) {
+      return res.status(400).json({ error: metadataValidation.error });
+    }
+
+    const schedulingMetadata = {
+      ...DEFAULT_SCHEDULING_METADATA,
+      ai_estimated_minutes: null,
+      schedule_notes: null,
+      ...metadataValidation.values,
+    };
+
     // Prepare estimated value for insertion (null when empty)
     const estimatedValue =
       estimated_minutes === '' || estimated_minutes === null || estimated_minutes === undefined
@@ -130,10 +278,34 @@ const createTask = async (req, res) => {
     
     const result = await pool.query(
       `INSERT INTO tasks
-        (user_id, module_id, title, description, deadline, estimated_minutes, priority, preferred_start_time, preferred_end_time)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-        RETURNING id, user_id, module_id, title, description, deadline, estimated_minutes, priority, status, preferred_start_time, preferred_end_time, created_at, updated_at`,
-      [userId, module_id, title, description || null, deadline || null, estimatedValue, priority || 1, preferred_start_time || null, preferred_end_time || null]
+        (
+          user_id, module_id, title, description, deadline, estimated_minutes,
+          priority, preferred_start_time, preferred_end_time, task_type,
+          difficulty, requires_revision, revision_sessions_needed,
+          min_session_minutes, max_session_minutes, ai_estimated_minutes,
+          schedule_notes
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+        RETURNING ${TASK_RETURN_FIELDS}`,
+      [
+        userId,
+        module_id,
+        title,
+        description || null,
+        deadline || null,
+        estimatedValue,
+        priority || 1,
+        preferred_start_time || null,
+        preferred_end_time || null,
+        schedulingMetadata.task_type,
+        schedulingMetadata.difficulty,
+        schedulingMetadata.requires_revision,
+        schedulingMetadata.revision_sessions_needed,
+        schedulingMetadata.min_session_minutes,
+        schedulingMetadata.max_session_minutes,
+        schedulingMetadata.ai_estimated_minutes,
+        schedulingMetadata.schedule_notes,
+      ]
     );
 
     const newTask = result.rows[0];
@@ -168,11 +340,20 @@ const updateTask = async (req, res) => {
   try {
     const userId = req.user.id;
     const taskId = req.params.id;
-    const { title, description, deadline, estimated_minutes, priority, status, preferred_start_time, preferred_end_time } = req.body;
+    const {
+      title,
+      description,
+      deadline,
+      estimated_minutes,
+      priority,
+      status,
+      preferred_start_time,
+      preferred_end_time,
+    } = req.body;
 
     // Verify task belongs to user
     const taskExists = await pool.query(
-      'SELECT id, status FROM tasks WHERE id = $1 AND user_id = $2',
+      'SELECT id, status, min_session_minutes, max_session_minutes FROM tasks WHERE id = $1 AND user_id = $2',
       [taskId, userId]
     );
 
@@ -254,6 +435,16 @@ const updateTask = async (req, res) => {
       params.push(preferred_end_time || null);
     }
 
+    const metadataValidation = validateTaskSchedulingMetadata(req.body, previousTask);
+    if (metadataValidation.error) {
+      return res.status(400).json({ error: metadataValidation.error });
+    }
+
+    Object.entries(metadataValidation.values).forEach(([field, value]) => {
+      updates.push(`${field} = $${paramCount++}`);
+      params.push(value);
+    });
+
     if (updates.length === 0) {
       return res.status(400).json({ error: 'No fields to update' });
     }
@@ -269,7 +460,7 @@ const updateTask = async (req, res) => {
       UPDATE tasks
       SET ${updates.join(', ')}
       WHERE id = $${taskIdParam} AND user_id = $${userIdParam}
-      RETURNING id, user_id, module_id, title, description, deadline, estimated_minutes, priority, status, preferred_start_time, preferred_end_time, created_at, updated_at
+      RETURNING ${TASK_RETURN_FIELDS}
     `;
 
     const client = await pool.connect();
