@@ -58,6 +58,7 @@ api.interceptors.response.use(
  * 
  * - scheduleAPI: schedule endpoints
  * - productivityAPI: productivity  endpoint
+ * - settingsAPI: settings endpoints
  */
 
 export const authAPI = {
@@ -113,6 +114,14 @@ export const scheduleAPI = {
 export const productivityAPI = {
   getSummary: () =>
     api.get('/productivity/summary'),
+};
+
+export const settingsAPI = {
+  getSettings: () =>
+    api.get('/settings'),
+
+  updateSettings: (data) =>
+    api.put('/settings', data),
 };
 
 export default api;
