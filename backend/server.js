@@ -30,6 +30,7 @@ const moduleRoutes = require('./routes/moduleRoutes');
 const taskRoutes = require('./routes/taskRoutes');
 const scheduleRoutes = require('./routes/scheduleRoutes');
 const productivityRoutes = require('./routes/productivityRoutes');
+const settingsRoutes = require('./routes/settingsRoutes');
 
 // Register routes through these routes 
 app.use('/api/auth', authRoutes);
@@ -37,6 +38,7 @@ app.use('/api/modules', moduleRoutes);
 app.use('/api/tasks', taskRoutes);
 app.use('/api/schedule', scheduleRoutes);
 app.use('/api/productivity', productivityRoutes);
+app.use('/api/settings', settingsRoutes);
 
 // check that server is running
 app.get('/api/health', (req, res) => {
@@ -82,6 +84,8 @@ const startServer = async () => {
       console.log(`  POST   /api/auth/register`);
       console.log(`  POST   /api/auth/login`);
       console.log(`  GET    /api/auth/me`);
+      console.log(`  GET    /api/settings`);
+      console.log(`  PUT    /api/settings`);
       console.log(`  GET    /api/health\n`);
     });
   } catch (err) {
