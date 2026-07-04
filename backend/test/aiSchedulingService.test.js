@@ -65,6 +65,8 @@ test('returns a validated plan from a configured provider response', async () =>
     assert.equal(url, 'https://provider.example/schedule');
     assert.equal(requestBody.model, 'test-model');
     assert.equal(requestBody.response_format.type, 'json_object');
+    assert.match(requestBody.messages[1].content, /Hard constraints:/);
+    assert.match(requestBody.messages[1].content, /Return JSON only/);
 
     return {
       ok: true,

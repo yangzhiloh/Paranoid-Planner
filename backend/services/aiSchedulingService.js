@@ -1,4 +1,8 @@
 const { getAISchedulingConfig } = require('../config/aiConfig');
+const {
+  buildAISchedulePrompt,
+  buildPromptData,
+} = require('./aiSchedulePromptBuilder');
 
 class AISchedulingError extends Error {
   constructor(message, code, statusCode = 503) {
@@ -8,19 +12,6 @@ class AISchedulingError extends Error {
     this.statusCode = statusCode;
   }
 }
-
-const EXPECTED_OUTPUT_DESCRIPTION = {
-  task_plans: [
-    {
-      task_id: 12,
-      recommended_total_minutes: 240,
-      recommended_session_count: 3,
-      recommended_session_minutes: 80,
-      recommended_strategy: 'split across multiple days before deadline',
-      reason: 'High priority assignment due soon',
-    },
-  ],
-};
 
 const safeLogAIError = (message, error) => {
   console.error(message, {
@@ -157,70 +148,11 @@ const validateAIPlan = (plan) => {
   };
 };
 
-const pickFields = (item, fields) => {
-  if (!item || typeof item !== 'object') return {};
-
-  return fields.reduce((picked, field) => {
-    if (item[field] !== undefined && item[field] !== null && item[field] !== '') {
-      picked[field] = item[field];
-    }
-    return picked;
-  }, {});
-};
-
-const buildAIContext = ({ tasks = [], lessons = [], settings = null, existingSessions = [] }) => ({
-  tasks: tasks.map((task) =>
-    pickFields(task, [
-      'id',
-      'title',
-      'deadline',
-      'estimated_minutes',
-      'priority',
-      'status',
-      'task_type',
-      'difficulty',
-      'requires_revision',
-      'revision_sessions_needed',
-      'min_session_minutes',
-      'max_session_minutes',
-      'ai_estimated_minutes',
-      'schedule_notes',
-    ])
-  ),
-  lessons: lessons.map((lesson) =>
-    pickFields(lesson, [
-      'day_of_week',
-      'start_time',
-      'end_time',
-      'activity_type',
-      'module_id',
-    ])
-  ),
-  settings: settings
-    ? pickFields(settings, [
-        'preferred_study_start_time',
-        'preferred_study_end_time',
-        'max_session_minutes',
-        'break_minutes',
-        'avoid_weekends',
-        'deadline_buffer_days',
-      ])
-    : null,
-  existing_sessions: existingSessions.map((session) =>
-    pickFields(session, [
-      'task_id',
-      'scheduled_start',
-      'scheduled_end',
-      'status',
-    ])
-  ),
-});
-
-const buildMessages = (context) => [
+const buildMessages = (prompt) => [
   {
     role: 'system',
     content: [
-      'You are an AI planning assistant for a study planner.',
+      'You are helping create an academic study plan.',
       'Return JSON only. Do not include markdown, commentary, or code fences.',
       'Recommend task-level study effort only; do not create calendar sessions.',
       'Do not invent task IDs. Use only task IDs from the supplied tasks.',
@@ -228,18 +160,13 @@ const buildMessages = (context) => [
   },
   {
     role: 'user',
-    content: JSON.stringify({
-      instruction:
-        'Create scheduling recommendations for each incomplete task. Respect task difficulty, task type, revision needs, deadlines, estimated duration, user settings, fixed lessons, and existing sessions.',
-      expected_output_shape: EXPECTED_OUTPUT_DESCRIPTION,
-      context,
-    }),
+    content: prompt,
   },
 ];
 
-const buildProviderRequestBody = (config, context) => ({
+const buildProviderRequestBody = (config, prompt) => ({
   model: config.model,
-  messages: buildMessages(context),
+  messages: buildMessages(prompt),
   max_tokens: config.maxTokens,
   response_format: { type: 'json_object' },
 });
@@ -266,7 +193,7 @@ const assertAIAvailable = (config) => {
   }
 };
 
-const fetchProviderResponse = async (config, context) => {
+const fetchProviderResponse = async (config, prompt) => {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), config.requestTimeoutMs);
 
@@ -277,7 +204,7 @@ const fetchProviderResponse = async (config, context) => {
         Authorization: `Bearer ${config.apiKey}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(buildProviderRequestBody(config, context)),
+      body: JSON.stringify(buildProviderRequestBody(config, prompt)),
       signal: controller.signal,
     });
 
@@ -309,8 +236,8 @@ const getAISchedulingPlan = async ({ tasks, lessons, settings, existingSessions 
   try {
     assertAIAvailable(config);
 
-    const context = buildAIContext({ tasks, lessons, settings, existingSessions });
-    const providerResponse = await fetchProviderResponse(config, context);
+    const prompt = buildAISchedulePrompt({ tasks, lessons, settings, existingSessions });
+    const providerResponse = await fetchProviderResponse(config, prompt);
     const parsedPlan = parseProviderResponse(providerResponse);
 
     return validateAIPlan(parsedPlan);
@@ -328,9 +255,9 @@ const getAISchedulingPlan = async ({ tasks, lessons, settings, existingSessions 
 
 module.exports = {
   AISchedulingError,
-  buildAIContext,
   buildMessages,
   buildProviderRequestBody,
+  buildPromptData,
   getAISchedulingPlan,
   parseProviderResponse,
   validateAIPlan,
