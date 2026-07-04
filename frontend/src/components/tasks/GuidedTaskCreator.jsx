@@ -1,5 +1,16 @@
 import PrimaryButton from '../PrimaryButton';
-import { TASK_TYPES, URGENCY_PRIORITY, URGENCY_STYLES, getModule, generateTaskTitle, formatDate, formatTime } from './taskConstants';
+import {
+    DIFFICULTY_OPTIONS,
+    TASK_TYPES,
+    URGENCY_PRIORITY,
+    URGENCY_STYLES,
+    getDifficultyLabel,
+    getModule,
+    getTaskTypeLabel,
+    generateTaskTitle,
+    formatDate,
+    formatTime
+} from './taskConstants';
 
 const GuidedTaskCreator = ({
     modules,
@@ -13,6 +24,8 @@ const GuidedTaskCreator = ({
 }) => {
     const previewTitle = generateTaskTitle(guidedTaskForm, modules);
     const moduleInfo = getModule(modules, guidedTaskForm.module_id);
+    const showRevisionSessions =
+        guidedTaskForm.requires_revision || guidedTaskForm.taskType === 'exam_revision';
 
     return (
         <form
@@ -61,11 +74,37 @@ const GuidedTaskCreator = ({
                                 <label className="block text-sm font-semibold text-slate-300 mb-2">Task Type</label>
                                 <select
                                     value={guidedTaskForm.taskType}
-                                    onChange={(e) => setGuidedTaskForm((s) => ({ ...s, taskType: e.target.value }))}
+                                    onChange={(e) => {
+                                        const nextTaskType = e.target.value;
+                                        setGuidedTaskForm((s) => ({
+                                            ...s,
+                                            taskType: nextTaskType,
+                                            requires_revision:
+                                                nextTaskType === 'exam_revision' ? true : s.requires_revision,
+                                            revision_sessions_needed:
+                                                nextTaskType === 'exam_revision' && Number(s.revision_sessions_needed) === 0
+                                                    ? 1
+                                                    : s.revision_sessions_needed
+                                        }));
+                                    }}
                                     className="glass-input w-full"
                                 >
                                     {TASK_TYPES.map((type) => (
-                                        <option key={type}>{type}</option>
+                                        <option key={type.value} value={type.value}>{type.label}</option>
+                                    ))}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-sm font-semibold text-slate-300 mb-2">Difficulty</label>
+                                <select
+                                    value={guidedTaskForm.difficulty}
+                                    onChange={(e) => setGuidedTaskForm((s) => ({ ...s, difficulty: e.target.value }))}
+                                    className="glass-input w-full"
+                                >
+                                    {DIFFICULTY_OPTIONS.map((difficulty) => (
+                                        <option key={difficulty.value} value={difficulty.value}>
+                                            {difficulty.label}
+                                        </option>
                                     ))}
                                 </select>
                             </div>
@@ -120,6 +159,58 @@ const GuidedTaskCreator = ({
                             </div>
                         </div>
 
+                        <div className="grid gap-4 sm:grid-cols-2">
+                            <label
+                                className={`flex min-h-[54px] items-center justify-between gap-4 rounded-2xl border px-4 py-3 text-sm font-semibold text-[#fff7ed] transition ${
+                                    guidedTaskForm.requires_revision
+                                        ? 'border-amber-300/35 bg-amber-300/10 shadow-[0_0_18px_rgba(245,158,11,0.10)]'
+                                        : 'border-white/10 bg-[#160d0a]/80 hover:bg-[#1f130f]'
+                                }`}
+                            >
+                                <span>Requires revision?</span>
+                                <input
+                                    type="checkbox"
+                                    checked={guidedTaskForm.requires_revision}
+                                    onChange={(e) =>
+                                        setGuidedTaskForm((s) => ({
+                                            ...s,
+                                            requires_revision: e.target.checked,
+                                            revision_sessions_needed:
+                                                e.target.checked && Number(s.revision_sessions_needed) === 0
+                                                    ? 1
+                                                    : s.revision_sessions_needed
+                                        }))
+                                    }
+                                    className="h-5 w-5 cursor-pointer rounded border-[#7c4a2c] bg-[#2a1a14] text-amber-500 accent-amber-500 focus:ring-2 focus:ring-amber-300/40"
+                                />
+                            </label>
+
+                            {showRevisionSessions && (
+                                <div>
+                                    <label className="block text-sm font-semibold text-slate-300 mb-2">Revision sessions needed</label>
+                                    <input
+                                        type="number"
+                                        min="0"
+                                        step="1"
+                                        value={guidedTaskForm.revision_sessions_needed}
+                                        onChange={(e) => setGuidedTaskForm((s) => ({ ...s, revision_sessions_needed: e.target.value }))}
+                                        className="glass-input w-full"
+                                    />
+                                </div>
+                            )}
+                        </div>
+
+                        <div>
+                            <label className="block text-sm font-semibold text-slate-300 mb-2">Scheduling notes</label>
+                            <textarea
+                                value={guidedTaskForm.schedule_notes}
+                                onChange={(e) => setGuidedTaskForm((s) => ({ ...s, schedule_notes: e.target.value }))}
+                                rows="2"
+                                placeholder="Split into shorter sessions"
+                                className="glass-input w-full min-h-[80px] resize-none"
+                            />
+                        </div>
+
                         <div>
                             <label className="block text-sm font-semibold text-slate-300 mb-2">Notes</label>
                             <textarea
@@ -171,12 +262,27 @@ const GuidedTaskCreator = ({
                             <div className="grid gap-3 sm:grid-cols-2">
                                 <div className="rounded-2xl border border-white/10 bg-[#241611]/85 p-4 shadow-[inset_0_1px_0_rgba(255,247,237,0.04)]">
                                     <p className="text-xs uppercase tracking-[0.2em] text-[#a98562]">Type</p>
-                                    <p className="mt-2 font-semibold text-[#fff7ed]">{guidedTaskForm.taskType}</p>
+                                    <p className="mt-2 font-semibold text-[#fff7ed]">{getTaskTypeLabel(guidedTaskForm.taskType)}</p>
                                 </div>
                                 <div className="rounded-2xl border border-white/10 bg-[#241611]/85 p-4 shadow-[inset_0_1px_0_rgba(255,247,237,0.04)]">
                                     <p className="text-xs uppercase tracking-[0.2em] text-[#a98562]">Deadline</p>
                                     <p className="mt-2 font-semibold text-[#fff7ed]">
                                         {guidedTaskForm.deadline ? `${formatDate(guidedTaskForm.deadline)} • ${formatTime(guidedTaskForm.deadline)}` : 'Not set'}
+                                    </p>
+                                </div>
+                            </div>
+
+                            <div className="grid gap-3 sm:grid-cols-2">
+                                <div className="rounded-2xl border border-white/10 bg-[#241611]/85 p-4 shadow-[inset_0_1px_0_rgba(255,247,237,0.04)]">
+                                    <p className="text-xs uppercase tracking-[0.2em] text-[#a98562]">Difficulty</p>
+                                    <p className="mt-2 font-semibold text-[#fff7ed]">{getDifficultyLabel(guidedTaskForm.difficulty)}</p>
+                                </div>
+                                <div className="rounded-2xl border border-white/10 bg-[#241611]/85 p-4 shadow-[inset_0_1px_0_rgba(255,247,237,0.04)]">
+                                    <p className="text-xs uppercase tracking-[0.2em] text-[#a98562]">Revision</p>
+                                    <p className="mt-2 font-semibold text-[#fff7ed]">
+                                        {showRevisionSessions
+                                            ? `${guidedTaskForm.revision_sessions_needed || 0} session${Number(guidedTaskForm.revision_sessions_needed) === 1 ? '' : 's'}`
+                                            : 'Not required'}
                                     </p>
                                 </div>
                             </div>
@@ -192,6 +298,13 @@ const GuidedTaskCreator = ({
                                         {guidedTaskForm.estimated_minutes ? `${guidedTaskForm.estimated_minutes} mins` : 'Optional'}
                                     </p>
                                 </div>
+                            </div>
+
+                            <div className="rounded-2xl border border-white/10 bg-[#241611]/85 p-4 shadow-[inset_0_1px_0_rgba(255,247,237,0.04)]">
+                                <p className="text-xs uppercase tracking-[0.2em] text-[#a98562]">Scheduling Notes</p>
+                                <p className="mt-2 font-semibold text-[#fff7ed]">
+                                    {(guidedTaskForm.schedule_notes || '').trim() || 'None added'}
+                                </p>
                             </div>
                         </div>
                     </div>

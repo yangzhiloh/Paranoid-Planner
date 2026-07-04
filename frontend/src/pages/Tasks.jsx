@@ -291,6 +291,16 @@ export const Tasks = () => {
             return;
         }
 
+        const shouldValidateRevisionSessions =
+            guidedTaskForm.requires_revision || guidedTaskForm.taskType === 'exam_revision';
+        if (shouldValidateRevisionSessions) {
+            const revisionSessions = Number(guidedTaskForm.revision_sessions_needed);
+            if (!Number.isInteger(revisionSessions) || revisionSessions < 0) {
+                setError('Revision sessions needed must be zero or more');
+                return;
+            }
+        }
+
         try {
             await tasksAPI.createTask(buildGuidedTaskPayload(guidedTaskForm, modules));
             resetGuidedForm();
