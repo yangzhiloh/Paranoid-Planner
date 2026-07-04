@@ -10,7 +10,11 @@ export const EMPTY_TASK_FORM = {
 
 export const EMPTY_GUIDED_FORM = {
     module_id: '',
-    taskType: 'Assignment',
+    taskType: 'assignment',
+    difficulty: 'medium',
+    requires_revision: false,
+    revision_sessions_needed: 0,
+    schedule_notes: '',
     title: '',
     urgency: 'Medium',
     deadline: '',
@@ -26,17 +30,28 @@ export const URGENCY_STYLES = {
     Critical: 'border border-rose-300/30 bg-rose-300/15 text-rose-100 shadow-[0_0_18px_rgba(251,113,133,0.14)]'
 };
 
-export const TASK_TYPES = ['Assignment', 'Quiz', 'Project', 'Reading', 'Revision', 'Exam', 'Other'];
+export const TASK_TYPES = [
+    { label: 'Assignment', value: 'assignment' },
+    { label: 'Quiz', value: 'quiz' },
+    { label: 'Exam Revision', value: 'exam_revision' },
+    { label: 'Lecture Review', value: 'lecture_review' },
+    { label: 'Tutorial Preparation', value: 'tutorial_prep' },
+    { label: 'Project', value: 'project' },
+    { label: 'Reading', value: 'reading' },
+    { label: 'Other', value: 'other' }
+];
 
-const GUIDED_TASK_TYPE_METADATA = {
-    Assignment: 'assignment',
-    Quiz: 'quiz',
-    Project: 'project',
-    Reading: 'reading',
-    Revision: 'exam_revision',
-    Exam: 'exam_revision',
-    Other: 'other'
-};
+export const DIFFICULTY_OPTIONS = [
+    { label: 'Easy', value: 'easy' },
+    { label: 'Medium', value: 'medium' },
+    { label: 'Hard', value: 'hard' }
+];
+
+export const getTaskTypeLabel = (value) =>
+    TASK_TYPES.find((type) => type.value === value)?.label || 'Other';
+
+export const getDifficultyLabel = (value) =>
+    DIFFICULTY_OPTIONS.find((difficulty) => difficulty.value === value)?.label || 'Medium';
 
 export const TASK_COLUMNS = [
     {
@@ -107,20 +122,33 @@ export const buildTaskPayload = (data) => {
 export const buildGuidedTaskPayload = (guided, modules) => {
     const moduleCode = getModule(modules, guided.module_id)?.module_code || 'Task';
     const estimated = parseOptionalPositiveNumber(guided.estimated_minutes);
+    const taskType = guided.taskType || 'assignment';
+    const difficulty = guided.difficulty || 'medium';
+    const revisionSessions = Number(guided.revision_sessions_needed);
+    const revisionSessionsNeeded =
+        guided.requires_revision || taskType === 'exam_revision'
+            ? Number.isFinite(revisionSessions) && revisionSessions >= 0
+                ? revisionSessions
+                : 0
+            : 0;
 
     return {
         module_id: guided.module_id,
-        title: guided.title.trim() || `${moduleCode} ${guided.taskType}`,
+        title: guided.title.trim() || `${moduleCode} ${getTaskTypeLabel(guided.taskType)}`,
         description: guided.description,
         deadline: guided.deadline,
         priority: URGENCY_PRIORITY[guided.urgency] ?? 3,
         estimated_minutes: estimated,
-        task_type: GUIDED_TASK_TYPE_METADATA[guided.taskType] || 'other',
+        task_type: taskType,
+        difficulty,
+        requires_revision: Boolean(guided.requires_revision),
+        revision_sessions_needed: revisionSessionsNeeded,
+        schedule_notes: guided.schedule_notes || '',
         status: 'pending'
     };
 };
 
 export const generateTaskTitle = (guided, modules) => {
     const moduleCode = getModule(modules, guided.module_id)?.module_code || 'Task';
-    return guided.title.trim() || `${moduleCode} ${guided.taskType}`;
+    return guided.title.trim() || `${moduleCode} ${getTaskTypeLabel(guided.taskType)}`;
 };
