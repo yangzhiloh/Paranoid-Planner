@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
-import { FaBell, FaBookOpen, FaUserCog } from 'react-icons/fa';
+import { useNavigate } from 'react-router-dom';
+import { FaBell, FaBookOpen, FaSignOutAlt, FaUserCog } from 'react-icons/fa';
 import { settingsAPI } from '../api/api';
 import PrimaryButton from '../components/PrimaryButton';
 import { DashboardSidebar } from '../components/dashboard/DashboardSidebar';
+import { useAuth } from '../context/AuthContext';
 import './Dashboard.css';
 
 const EMPTY_STUDY_FORM = {
@@ -167,29 +169,20 @@ const SettingsToggle = ({ label, checked, disabled, onToggle }) => (
   </button>
 );
 
-const PlaceholderCard = ({ title, label, description, icon: Icon }) => (
-  <article className="replica-card p-6 sm:p-7">
-    <div className="flex items-start justify-between gap-4">
-      <div>
-        <span className="card-kicker">{label}</span>
-        <h2 className="mb-0 mt-2 text-xl font-bold tracking-tight text-[#fff7ed]">
-          {title}
-        </h2>
-      </div>
-      <div className="grid h-11 w-11 shrink-0 place-items-center rounded-full border border-amber-200/20 bg-amber-300/10 text-amber-200">
-        <Icon aria-hidden="true" />
-      </div>
-    </div>
-    <p className="mb-0 mt-4 text-sm leading-6 text-[#b9a99d]">
-      {description}
-    </p>
-    <div className="mt-6 rounded-lg border border-dashed border-amber-200/15 bg-[#fff7ed]/[0.03] px-4 py-3 text-xs font-semibold uppercase tracking-[0.16em] text-[#ffb074]">
-      Coming soon
-    </div>
-  </article>
+const AccountRow = ({ label, value }) => (
+  <div className="flex min-h-[64px] flex-col justify-center rounded-xl border border-[#fff0e0]/[0.10] bg-[#100905]/90 px-5 py-4 shadow-[inset_0_1px_rgba(255,247,237,0.03)]">
+    <span className="text-xs font-bold uppercase tracking-[0.12em] text-[#9f8e80]">
+      {label}
+    </span>
+    <span className="mt-1 break-words text-sm font-semibold text-[#fff7ed]">
+      {value || 'Not available'}
+    </span>
+  </div>
 );
 
 export const Settings = () => {
+  const navigate = useNavigate();
+  const { user, isAuthenticated, logout } = useAuth();
   const [studyForm, setStudyForm] = useState(EMPTY_STUDY_FORM);
   const [reminderForm, setReminderForm] = useState(EMPTY_REMINDER_FORM);
   const [loading, setLoading] = useState(true);
@@ -274,6 +267,11 @@ export const Settings = () => {
     }));
   };
 
+  const handleLogout = () => {
+    logout();
+    navigate('/login');
+  };
+
   const handleSubmit = async (event) => {
     event.preventDefault();
     const validationError = validateStudyForm(studyForm);
@@ -344,6 +342,10 @@ export const Settings = () => {
       setReminderSaving(false);
     }
   };
+
+  const accountName = user?.name || user?.displayName || user?.username;
+  const accountEmail = user?.email;
+  const accountStatus = isAuthenticated ? 'Signed in' : 'Signed out';
 
   return (
     <div className="replica-stage">
@@ -569,12 +571,42 @@ export const Settings = () => {
                     </PrimaryButton>
                   </div>
                 </form>
-                <PlaceholderCard
-                  title="Account Settings"
-                  label="Account"
-                  description="Profile, sign-in, and account management options."
-                  icon={FaUserCog}
-                />
+                <section
+                  className="replica-card p-6 sm:p-8"
+                  aria-label="Account settings"
+                >
+                  <div className="flex flex-col gap-5 border-b border-[#fff0e0]/[0.10] pb-6 md:flex-row md:items-start md:justify-between">
+                    <div>
+                      <span className="card-kicker">Account</span>
+                      <h2 className="mb-0 mt-2 text-2xl font-bold tracking-tight text-[#fff7ed]">
+                        Account Settings
+                      </h2>
+                      <p className="mb-0 mt-3 max-w-2xl text-sm leading-6 text-[#b9a99d]">
+                        View your account details and manage your session.
+                      </p>
+                    </div>
+                    <div className="grid h-11 w-11 shrink-0 place-items-center rounded-full border border-amber-200/20 bg-amber-300/10 text-amber-200">
+                      <FaUserCog aria-hidden="true" />
+                    </div>
+                  </div>
+
+                  <div className="mt-7 grid max-w-[780px] gap-x-8 gap-y-5 md:grid-cols-2">
+                    <AccountRow label="Name" value={accountName} />
+                    <AccountRow label="Email" value={accountEmail} />
+                    <AccountRow label="Session" value={accountStatus} />
+                  </div>
+
+                  <div className="mt-8 flex max-w-[780px] justify-end border-t border-[#fff0e0]/[0.08] pt-5">
+                    <button
+                      type="button"
+                      onClick={handleLogout}
+                      className="inline-flex min-h-[44px] w-full items-center justify-center gap-2 rounded-full border border-[#ff744c]/35 bg-[#701f10]/20 px-5 py-2.5 text-sm font-semibold text-[#ffc1ae] transition hover:border-[#ff9d4d]/50 hover:bg-[#701f10]/32 focus:outline-none focus:ring-2 focus:ring-[#ff9d4d]/30 sm:w-auto"
+                    >
+                      <FaSignOutAlt aria-hidden="true" />
+                      Log out
+                    </button>
+                  </div>
+                </section>
               </section>
             </div>
           )}
