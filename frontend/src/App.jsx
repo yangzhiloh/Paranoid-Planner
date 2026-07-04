@@ -9,6 +9,7 @@ import { Dashboard } from './pages/Dashboard';
 import { Modules } from './pages/Modules';
 import { Tasks } from './pages/Tasks';
 import { Schedule } from './pages/Schedule';
+import { Settings } from './pages/Settings';
 import './index.css';
 
 function App() {
@@ -52,6 +53,15 @@ function App() {
           element={
             <ProtectedRoute>
               <Schedule />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/settings"
+          element={
+            <ProtectedRoute>
+              <Settings />
             </ProtectedRoute>
           }
         />

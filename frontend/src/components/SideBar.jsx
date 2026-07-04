@@ -20,6 +20,7 @@ export const Sidebar = () => {
     { path: '/tasks', icon: FaTasks, label: 'Tasks' },
     { path: '/schedule', icon: FaCalendarAlt, label: 'Schedule' },
   ];
+  const settingsActive = location.pathname === '/settings';
 
   const handleLogout = () => {
     logout();
@@ -58,15 +59,19 @@ export const Sidebar = () => {
       </nav>
 
       <div className="flex flex-col gap-3">
-        <button
-          type="button"
-          disabled
-          aria-label="Settings coming soon"
-          title="Settings coming soon"
-          className="flex h-10 w-10 cursor-default items-center justify-center rounded-xl text-slate-400"
+        <Link
+          to="/settings"
+          aria-label="Settings"
+          aria-current={settingsActive ? 'page' : undefined}
+          title="Settings"
+          className={`flex h-10 w-10 items-center justify-center rounded-xl transition ${
+            settingsActive
+              ? 'bg-orange-500/80 text-white shadow-[0_8px_24px_rgba(200,80,20,0.35)]'
+              : 'text-slate-400 hover:bg-white/8 hover:text-white'
+          }`}
         >
           <FaCog size={16} aria-hidden="true" />
-        </button>
+        </Link>
         <button
           type="button"
           onClick={handleLogout}
