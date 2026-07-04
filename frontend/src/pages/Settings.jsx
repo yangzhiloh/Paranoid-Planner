@@ -14,12 +14,26 @@ const EMPTY_STUDY_FORM = {
   deadline_buffer_days: '1',
 };
 
+const EMPTY_REMINDER_FORM = {
+  enable_overdue_reminders: true,
+  enable_due_soon_reminders: true,
+  enable_study_session_reminders: true,
+  reminder_lead_hours: '24',
+};
+
 const inputClass =
-  'mt-2.5 min-h-[44px] w-full rounded-xl border border-[#fff0e0]/[0.10] bg-[#100905]/75 px-4 py-2.5 text-sm text-[#fff7ed] shadow-[inset_0_1px_rgba(255,247,237,0.03)] outline-none transition placeholder:text-[#9b897b] focus:border-[#f59e0b] focus:ring-2 focus:ring-[#f59e0b]/20 disabled:cursor-not-allowed disabled:opacity-70';
+  'mt-2.5 min-h-[44px] w-full appearance-none rounded-xl border border-[#fff0e0]/[0.10] bg-[#100905]/90 px-4 py-2.5 text-sm text-[#fff7ed] shadow-[inset_0_1px_rgba(255,247,237,0.03)] outline-none transition placeholder:text-[#9b897b] focus:border-[#f59e0b] focus:ring-2 focus:ring-[#f59e0b]/20 disabled:cursor-not-allowed disabled:opacity-70';
 
 const formatTimeForInput = (value, fallback) => {
   if (!value) return fallback;
   return String(value).slice(0, 5);
+};
+
+const formatBooleanForInput = (value, fallback) => {
+  if (typeof value === 'boolean') return value;
+  if (value === 'true') return true;
+  if (value === 'false') return false;
+  return fallback;
 };
 
 const buildStudyForm = (settings = {}) => ({
@@ -35,9 +49,30 @@ const buildStudyForm = (settings = {}) => ({
     settings.max_session_minutes ?? EMPTY_STUDY_FORM.max_session_minutes
   ),
   break_minutes: String(settings.break_minutes ?? EMPTY_STUDY_FORM.break_minutes),
-  avoid_weekends: Boolean(settings.avoid_weekends),
+  avoid_weekends: formatBooleanForInput(
+    settings.avoid_weekends,
+    EMPTY_STUDY_FORM.avoid_weekends
+  ),
   deadline_buffer_days: String(
     settings.deadline_buffer_days ?? EMPTY_STUDY_FORM.deadline_buffer_days
+  ),
+});
+
+const buildReminderForm = (settings = {}) => ({
+  enable_overdue_reminders: formatBooleanForInput(
+    settings.enable_overdue_reminders,
+    EMPTY_REMINDER_FORM.enable_overdue_reminders
+  ),
+  enable_due_soon_reminders: formatBooleanForInput(
+    settings.enable_due_soon_reminders,
+    EMPTY_REMINDER_FORM.enable_due_soon_reminders
+  ),
+  enable_study_session_reminders: formatBooleanForInput(
+    settings.enable_study_session_reminders,
+    EMPTY_REMINDER_FORM.enable_study_session_reminders
+  ),
+  reminder_lead_hours: String(
+    settings.reminder_lead_hours ?? EMPTY_REMINDER_FORM.reminder_lead_hours
   ),
 });
 
@@ -73,16 +108,63 @@ const validateStudyForm = (form) => {
   return '';
 };
 
-const StudyField = ({ id, label, helper, ...props }) => (
+const validateReminderForm = (form) => {
+  if (form.reminder_lead_hours === '') {
+    return 'Reminder lead time is required.';
+  }
+
+  const leadHours = Number(form.reminder_lead_hours);
+  if (!Number.isInteger(leadHours) || leadHours < 1 || leadHours > 168) {
+    return 'Reminder lead time must be between 1 and 168 hours.';
+  }
+
+  return '';
+};
+
+const SettingsField = ({ id, label, ...props }) => (
   <label htmlFor={id} className="block w-full max-w-[360px] text-sm font-semibold text-[#d9c8ba]">
     {label}
     <input id={id} className={inputClass} {...props} />
-    {helper && (
-      <span className="mt-2 block text-xs font-normal leading-5 text-[#9f8e80]">
-        {helper}
-      </span>
-    )}
   </label>
+);
+
+const SettingsToggle = ({ label, checked, disabled, onToggle }) => (
+  <button
+    type="button"
+    role="switch"
+    aria-checked={checked}
+    disabled={disabled}
+    onClick={onToggle}
+    className={`flex min-h-[70px] w-full max-w-[360px] items-center justify-between gap-5 rounded-xl border border-[#fff0e0]/[0.10] bg-[#100905]/90 px-5 py-4 text-left shadow-[inset_0_1px_rgba(255,247,237,0.03)] outline-none transition hover:border-amber-200/25 focus-visible:ring-2 focus-visible:ring-[#f59e0b]/40 ${
+      disabled ? 'cursor-not-allowed opacity-70' : 'cursor-pointer'
+    }`}
+  >
+    <span className="text-sm font-semibold leading-5 text-[#d9c8ba]">
+      {label}
+    </span>
+    <span className="flex shrink-0 items-center gap-3" aria-hidden="true">
+      <span
+        className={`text-xs font-bold uppercase tracking-[0.08em] transition ${
+          checked ? 'text-[#fbbf24]' : 'text-[#9f8e80]'
+        }`}
+      >
+        {checked ? 'On' : 'Off'}
+      </span>
+      <span
+        className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full border transition ${
+          checked
+            ? 'border-amber-300/50 bg-[#f59e0b]'
+            : 'border-[#fff0e0]/15 bg-[#211511]'
+        }`}
+      >
+        <span
+          className={`absolute top-[3px] block h-4 w-4 rounded-full bg-[#fff7ed] shadow transition ${
+            checked ? 'left-[22px]' : 'left-[4px]'
+          }`}
+        />
+      </span>
+    </span>
+  </button>
 );
 
 const PlaceholderCard = ({ title, label, description, icon: Icon }) => (
@@ -109,10 +191,14 @@ const PlaceholderCard = ({ title, label, description, icon: Icon }) => (
 
 export const Settings = () => {
   const [studyForm, setStudyForm] = useState(EMPTY_STUDY_FORM);
+  const [reminderForm, setReminderForm] = useState(EMPTY_REMINDER_FORM);
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
+  const [studySaving, setStudySaving] = useState(false);
+  const [studyError, setStudyError] = useState('');
+  const [studySuccess, setStudySuccess] = useState('');
+  const [reminderSaving, setReminderSaving] = useState(false);
+  const [reminderError, setReminderError] = useState('');
+  const [reminderSuccess, setReminderSuccess] = useState('');
 
   useEffect(() => {
     let active = true;
@@ -120,15 +206,17 @@ export const Settings = () => {
     const loadSettings = async () => {
       try {
         setLoading(true);
-        setError('');
+        setStudyError('');
+        setReminderError('');
         const response = await settingsAPI.getSettings();
 
         if (active) {
           setStudyForm(buildStudyForm(response.data?.settings));
+          setReminderForm(buildReminderForm(response.data?.settings));
         }
       } catch (err) {
         if (active) {
-          setError(
+          setStudyError(
             err.response?.data?.error ||
               'Settings could not be loaded. Please try again.'
           );
@@ -148,11 +236,41 @@ export const Settings = () => {
     const value =
       event.target.type === 'checkbox' ? event.target.checked : event.target.value;
 
-    setSuccess('');
-    setError('');
+    setStudySuccess('');
+    setStudyError('');
     setStudyForm((current) => ({
       ...current,
       [field]: value,
+    }));
+  };
+
+  const handleReminderChange = (field) => (event) => {
+    const value =
+      event.target.type === 'checkbox' ? event.target.checked : event.target.value;
+
+    setReminderSuccess('');
+    setReminderError('');
+    setReminderForm((current) => ({
+      ...current,
+      [field]: value,
+    }));
+  };
+
+  const handleStudyToggle = (field) => () => {
+    setStudySuccess('');
+    setStudyError('');
+    setStudyForm((current) => ({
+      ...current,
+      [field]: !current[field],
+    }));
+  };
+
+  const handleReminderToggle = (field) => () => {
+    setReminderSuccess('');
+    setReminderError('');
+    setReminderForm((current) => ({
+      ...current,
+      [field]: !current[field],
     }));
   };
 
@@ -161,15 +279,15 @@ export const Settings = () => {
     const validationError = validateStudyForm(studyForm);
 
     if (validationError) {
-      setSuccess('');
-      setError(validationError);
+      setStudySuccess('');
+      setStudyError(validationError);
       return;
     }
 
     try {
-      setSaving(true);
-      setError('');
-      setSuccess('');
+      setStudySaving(true);
+      setStudyError('');
+      setStudySuccess('');
 
       const response = await settingsAPI.updateSettings({
         preferred_study_start_time: studyForm.preferred_study_start_time,
@@ -181,14 +299,49 @@ export const Settings = () => {
       });
 
       setStudyForm(buildStudyForm(response.data?.settings));
-      setSuccess('Study preferences saved.');
+      setStudySuccess('Study preferences saved.');
     } catch (err) {
-      setError(
+      setStudyError(
         err.response?.data?.error ||
           'Study preferences could not be saved. Please try again.'
       );
     } finally {
-      setSaving(false);
+      setStudySaving(false);
+    }
+  };
+
+  const handleReminderSubmit = async (event) => {
+    event.preventDefault();
+    const validationError = validateReminderForm(reminderForm);
+
+    if (validationError) {
+      setReminderSuccess('');
+      setReminderError(validationError);
+      return;
+    }
+
+    try {
+      setReminderSaving(true);
+      setReminderError('');
+      setReminderSuccess('');
+
+      const response = await settingsAPI.updateSettings({
+        enable_overdue_reminders: reminderForm.enable_overdue_reminders,
+        enable_due_soon_reminders: reminderForm.enable_due_soon_reminders,
+        enable_study_session_reminders:
+          reminderForm.enable_study_session_reminders,
+        reminder_lead_hours: Number(reminderForm.reminder_lead_hours),
+      });
+
+      setReminderForm(buildReminderForm(response.data?.settings));
+      setReminderSuccess('Reminder preferences saved.');
+    } catch (err) {
+      setReminderError(
+        err.response?.data?.error ||
+          'Reminder preferences could not be saved. Please try again.'
+      );
+    } finally {
+      setReminderSaving(false);
     }
   };
 
@@ -220,7 +373,7 @@ export const Settings = () => {
               </div>
             </section>
           ) : (
-            <div className="grid gap-3 xl:grid-cols-[minmax(0,1.7fr)_minmax(280px,0.9fr)]">
+            <div className="grid gap-3">
               <form
                 onSubmit={handleSubmit}
                 className="replica-card p-6 sm:p-8"
@@ -242,42 +395,42 @@ export const Settings = () => {
                   </div>
                 </div>
 
-                {error && (
+                {studyError && (
                   <div
                     className="mt-5 rounded-lg border border-[#ff744c]/35 bg-[#701f10]/25 px-4 py-3 text-sm font-medium text-[#ffc1ae]"
                     role="alert"
                   >
-                    {error}
+                    {studyError}
                   </div>
                 )}
 
-                {success && !error && (
+                {studySuccess && !studyError && (
                   <div
                     className="mt-5 rounded-lg border border-emerald-300/25 bg-emerald-950/30 px-4 py-3 text-sm font-medium text-emerald-100"
                     role="status"
                   >
-                    {success}
+                    {studySuccess}
                   </div>
                 )}
 
                 <div className="mt-7 grid max-w-[780px] gap-x-8 gap-y-6 md:grid-cols-2">
-                  <StudyField
+                  <SettingsField
                     id="preferred-study-start-time"
                     label="Preferred study start time"
                     type="time"
                     value={studyForm.preferred_study_start_time}
                     onChange={handleChange('preferred_study_start_time')}
-                    disabled={saving}
+                    disabled={studySaving}
                   />
-                  <StudyField
+                  <SettingsField
                     id="preferred-study-end-time"
                     label="Preferred study end time"
                     type="time"
                     value={studyForm.preferred_study_end_time}
                     onChange={handleChange('preferred_study_end_time')}
-                    disabled={saving}
+                    disabled={studySaving}
                   />
-                  <StudyField
+                  <SettingsField
                     id="max-session-minutes"
                     label="Maximum study session length"
                     type="number"
@@ -286,9 +439,9 @@ export const Settings = () => {
                     step="1"
                     value={studyForm.max_session_minutes}
                     onChange={handleChange('max_session_minutes')}
-                    disabled={saving}
+                    disabled={studySaving}
                   />
-                  <StudyField
+                  <SettingsField
                     id="break-minutes"
                     label="Break duration"
                     type="number"
@@ -297,9 +450,9 @@ export const Settings = () => {
                     step="1"
                     value={studyForm.break_minutes}
                     onChange={handleChange('break_minutes')}
-                    disabled={saving}
+                    disabled={studySaving}
                   />
-                  <StudyField
+                  <SettingsField
                     id="deadline-buffer-days"
                     label="Deadline buffer days"
                     type="number"
@@ -308,51 +461,114 @@ export const Settings = () => {
                     step="1"
                     value={studyForm.deadline_buffer_days}
                     onChange={handleChange('deadline_buffer_days')}
-                    disabled={saving}
+                    disabled={studySaving}
                   />
 
-                  <label
-                    htmlFor="avoid-weekends"
-                    className="flex min-h-[70px] w-full max-w-[360px] items-center justify-between gap-5 rounded-xl border border-[#fff0e0]/[0.10] bg-[#100905]/75 px-5 py-4 shadow-[inset_0_1px_rgba(255,247,237,0.03)]"
-                  >
-                    <span>
-                      <span className="block text-sm font-semibold text-[#d9c8ba]">
-                        Avoid weekends
-                      </span>
-                    </span>
-                    <input
-                      id="avoid-weekends"
-                      type="checkbox"
-                      checked={studyForm.avoid_weekends}
-                      onChange={handleChange('avoid_weekends')}
-                      disabled={saving}
-                      className="h-5 w-5 rounded border-[#fff0e0]/20 bg-[#211511] text-[#f59e0b] focus:ring-2 focus:ring-[#f59e0b]/30 disabled:cursor-not-allowed disabled:opacity-70"
-                    />
-                  </label>
+                  <SettingsToggle
+                    label="Avoid weekends"
+                    checked={studyForm.avoid_weekends}
+                    onToggle={handleStudyToggle('avoid_weekends')}
+                    disabled={studySaving}
+                  />
                 </div>
 
-                <div className="mt-8 flex max-w-[780px] flex-col gap-4 border-t border-[#fff0e0]/[0.08] pt-5 sm:flex-row sm:items-center sm:justify-between">
-                  <p className="mb-0 max-w-md text-xs leading-5 text-[#9f8e80]">
-                    These preferences affect future planner behavior once scheduling uses them.
-                  </p>
+                <div className="mt-8 flex max-w-[780px] justify-end border-t border-[#fff0e0]/[0.08] pt-5">
                   <PrimaryButton
                     type="submit"
-                    loading={saving}
-                    disabled={saving}
+                    loading={studySaving}
+                    disabled={studySaving}
                     className="w-full px-5 py-2.5 text-sm font-semibold sm:w-auto"
                   >
-                    {saving ? 'Saving...' : 'Save Study Preferences'}
+                    {studySaving ? 'Saving...' : 'Save Study Preferences'}
                   </PrimaryButton>
                 </div>
               </form>
 
               <section className="grid gap-3" aria-label="More settings categories">
-                <PlaceholderCard
-                  title="Reminder Preferences"
-                  label="Reminders"
-                  description="Notification timing, nudges, and schedule reminder options."
-                  icon={FaBell}
-                />
+                <form
+                  onSubmit={handleReminderSubmit}
+                  className="replica-card p-6 sm:p-8"
+                  aria-label="Reminder preferences"
+                  noValidate
+                >
+                  <div className="flex flex-col gap-5 border-b border-[#fff0e0]/[0.10] pb-6 md:flex-row md:items-start md:justify-between">
+                    <div>
+                      <span className="card-kicker">Reminders</span>
+                      <h2 className="mb-0 mt-2 text-2xl font-bold tracking-tight text-[#fff7ed]">
+                        Reminder Preferences
+                      </h2>
+                      <p className="mb-0 mt-3 max-w-2xl text-sm leading-6 text-[#b9a99d]">
+                        Choose which in-app reminders should appear across Dashboard, Tasks, and Schedule.
+                      </p>
+                    </div>
+                    <div className="grid h-11 w-11 shrink-0 place-items-center rounded-full border border-amber-200/20 bg-amber-300/10 text-amber-200">
+                      <FaBell aria-hidden="true" />
+                    </div>
+                  </div>
+
+                  {reminderError && (
+                    <div
+                      className="mt-5 rounded-lg border border-[#ff744c]/35 bg-[#701f10]/25 px-4 py-3 text-sm font-medium text-[#ffc1ae]"
+                      role="alert"
+                    >
+                      {reminderError}
+                    </div>
+                  )}
+
+                  {reminderSuccess && !reminderError && (
+                    <div
+                      className="mt-5 rounded-lg border border-emerald-300/25 bg-emerald-950/30 px-4 py-3 text-sm font-medium text-emerald-100"
+                      role="status"
+                    >
+                      {reminderSuccess}
+                    </div>
+                  )}
+
+                  <div className="mt-7 grid max-w-[780px] gap-x-8 gap-y-6 md:grid-cols-2">
+                    <SettingsToggle
+                      label="Enable overdue reminders"
+                      checked={reminderForm.enable_overdue_reminders}
+                      onToggle={handleReminderToggle('enable_overdue_reminders')}
+                      disabled={reminderSaving}
+                    />
+                    <SettingsToggle
+                      label="Enable due-soon reminders"
+                      checked={reminderForm.enable_due_soon_reminders}
+                      onToggle={handleReminderToggle('enable_due_soon_reminders')}
+                      disabled={reminderSaving}
+                    />
+                    <SettingsToggle
+                      label="Enable study-session reminders"
+                      checked={reminderForm.enable_study_session_reminders}
+                      onToggle={handleReminderToggle(
+                        'enable_study_session_reminders'
+                      )}
+                      disabled={reminderSaving}
+                    />
+                    <SettingsField
+                      id="reminder-lead-hours"
+                      label="Reminder lead time in hours"
+                      type="number"
+                      min="1"
+                      max="168"
+                      step="1"
+                      value={reminderForm.reminder_lead_hours}
+                      onChange={handleReminderChange('reminder_lead_hours')}
+                      disabled={reminderSaving}
+                    />
+                  </div>
+
+                  <div className="mt-8 flex max-w-[780px] justify-end border-t border-[#fff0e0]/[0.08] pt-5">
+                    <PrimaryButton
+                      type="submit"
+                      loading={reminderSaving}
+                      disabled={reminderSaving}
+                      className="w-full px-5 py-2.5 text-sm font-semibold sm:w-auto"
+                    >
+                      {reminderSaving ? 'Saving...' : 'Save Reminder Preferences'}
+                    </PrimaryButton>
+                  </div>
+                </form>
                 <PlaceholderCard
                   title="Account Settings"
                   label="Account"
