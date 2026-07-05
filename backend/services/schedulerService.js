@@ -1,3 +1,5 @@
+const aiSchedulingService = require('./aiSchedulingService');
+
 const startOfDay = (date) => {
   const d = new Date(date);
   d.setHours(0, 0, 0, 0);
@@ -81,10 +83,15 @@ const hasOverlap = (start, end, blockedTimes) =>
 
 const getIncompleteTasks = async (userId, database) => {
   const { rows } = await database.query(
-    `SELECT id, user_id, module_id, title, deadline, estimated_minutes,
-            priority, status, preferred_start_time, preferred_end_time
-     FROM tasks
-     WHERE user_id = $1 AND status NOT IN ('completed', 'cancelled')`,
+    `SELECT
+       t.id, t.user_id, t.module_id, t.title, t.deadline, t.estimated_minutes,
+       t.priority, t.status, t.preferred_start_time, t.preferred_end_time,
+       t.task_type, t.difficulty, t.requires_revision, t.revision_sessions_needed,
+       t.min_session_minutes, t.max_session_minutes, t.ai_estimated_minutes,
+       t.schedule_notes, m.module_code
+     FROM tasks t
+     LEFT JOIN modules m ON t.module_id = m.id
+     WHERE t.user_id = $1 AND t.status NOT IN ('completed', 'cancelled')`,
     [userId]
   );
 
@@ -93,9 +100,11 @@ const getIncompleteTasks = async (userId, database) => {
 
 const getFixedLessons = async (userId, database) => {
   const { rows } = await database.query(
-    `SELECT id, day_of_week, start_time, end_time, activity_type, module_id
-     FROM lessons
-     WHERE user_id = $1`,
+    `SELECT l.id, l.day_of_week, l.start_time, l.end_time, l.activity_type,
+            l.module_id, m.module_code
+     FROM lessons l
+     LEFT JOIN modules m ON l.module_id = m.id
+     WHERE l.user_id = $1`,
     [userId]
   );
 
@@ -119,6 +128,19 @@ const getExistingStudySessions = async (userId, database) => {
   );
 
   return rows;
+};
+
+const getUserSettings = async (userId, database) => {
+  const { rows } = await database.query(
+    `SELECT preferred_study_start_time, preferred_study_end_time,
+            max_session_minutes, break_minutes, avoid_weekends, deadline_buffer_days
+     FROM user_settings
+     WHERE user_id = $1
+     LIMIT 1`,
+    [userId]
+  );
+
+  return rows[0] || null;
 };
 
 const sortTasksForScheduling = (tasks) => [...tasks].sort(compareTasks);
@@ -150,21 +172,29 @@ const buildBlockedTime = ({ lessons = [], sessions = [], date = null }) => [
   ...convertSessionsToBlockedTime(sessions),
 ];
 
-const getTaskWindowEnd = (task, now) => {
+const getTaskWindowEnd = (task, now, settings = {}) => {
   const taskDeadline = task.deadline ? new Date(task.deadline) : null;
   const hasValidDeadline = taskDeadline && !Number.isNaN(taskDeadline.getTime());
   const isOverdue = hasValidDeadline && taskDeadline < now;
 
   if (isOverdue) return addDays(now, 1);
-  if (hasValidDeadline) return taskDeadline;
+  if (hasValidDeadline) {
+    const bufferDays = Number(settings.deadline_buffer_days || 0);
+    if (Number.isFinite(bufferDays) && bufferDays > 0) {
+      const bufferedDeadline = addDays(taskDeadline, -bufferDays);
+      if (bufferedDeadline > now) return bufferedDeadline;
+    }
+    return taskDeadline;
+  }
   return addDays(now, FALLBACK_SCHEDULE_DAYS);
 };
 
-const getTaskDayWindowEnd = ({ task, currentDay, windowEnd }) => {
+const getTaskDayWindowEnd = ({ task, currentDay, windowEnd, settings = {} }) => {
   const dayEnd = new Date(currentDay);
+  const preferredEnd = task.preferred_end_time || settings.preferred_study_end_time;
 
-  if (task.preferred_end_time) {
-    const [hours, minutes] = String(task.preferred_end_time).split(':').map(Number);
+  if (preferredEnd) {
+    const [hours, minutes] = String(preferredEnd).split(':').map(Number);
     dayEnd.setHours(hours, minutes, 0, 0);
   } else {
     dayEnd.setHours(23, 59, 59, 999);
@@ -173,9 +203,36 @@ const getTaskDayWindowEnd = ({ task, currentDay, windowEnd }) => {
   return dayEnd < windowEnd ? dayEnd : windowEnd;
 };
 
-const splitTaskIntoSessions = (task, settings = {}) => {
-  const estimatedMinutes = task.estimated_minutes || 60;
-  const maxSessionMinutes = settings.max_session_minutes || 120;
+const getMaxSessionMinutes = (settings = {}) => {
+  const parsedMax = Number(settings.max_session_minutes);
+  return Number.isFinite(parsedMax) && parsedMax > 0 ? parsedMax : 120;
+};
+
+const splitTaskIntoSessions = (task, settings = {}, taskPlan = null) => {
+  const estimatedMinutes = taskPlan?.recommended_total_minutes || task.estimated_minutes || 60;
+  const recommendedSessionCount = Number(taskPlan?.recommended_session_count);
+  const recommendedSessionMinutes = Number(taskPlan?.recommended_session_minutes);
+  const maxSessionMinutes = getMaxSessionMinutes(settings);
+
+  if (
+    taskPlan &&
+    Number.isInteger(recommendedSessionCount) &&
+    recommendedSessionCount > 0 &&
+    Number.isFinite(recommendedSessionMinutes) &&
+    recommendedSessionMinutes > 0
+  ) {
+    const targetSessionMinutes = Math.min(recommendedSessionMinutes, maxSessionMinutes);
+    let remainingMinutes = estimatedMinutes;
+
+    return Array.from({ length: recommendedSessionCount }, (_, index) => {
+      const remainingSessions = recommendedSessionCount - index;
+      const balancedMinutes = Math.ceil(remainingMinutes / remainingSessions);
+      const duration = Math.min(targetSessionMinutes, balancedMinutes, remainingMinutes);
+      remainingMinutes -= duration;
+      return duration;
+    }).filter((duration) => duration > 0);
+  }
+
   const blockDuration = Math.min(maxSessionMinutes, estimatedMinutes);
   const numBlocks = Math.ceil(estimatedMinutes / blockDuration);
 
@@ -191,14 +248,16 @@ const findAvailableSlot = ({
   blockedTimes,
   currentDay,
   windowEnd,
+  settings = {},
   now = new Date(),
 }) => {
+  const preferredStart = task.preferred_start_time || settings.preferred_study_start_time;
   let candidate = roundUpToNextInterval(
-    getStudyBlockStartTime(currentDay, task.preferred_start_time)
+    getStudyBlockStartTime(currentDay, preferredStart)
   );
   if (candidate < now) candidate = roundUpToNextInterval(now);
 
-  const candidateWindowEnd = getTaskDayWindowEnd({ task, currentDay, windowEnd });
+  const candidateWindowEnd = getTaskDayWindowEnd({ task, currentDay, windowEnd, settings });
 
   while (true) {
     const blockEnd = addMinutes(candidate, durationMinutes);
@@ -231,6 +290,84 @@ const getLessonBlocksForDay = async (userId, date, database) => {
   return convertLessonsToBlockedTime(lessons, date);
 };
 
+const isWeekend = (date) => date.getDay() === 0 || date.getDay() === 6;
+
+const getTaskPlanMap = (taskPlans = []) =>
+  new Map(taskPlans.map((taskPlan) => [Number(taskPlan.task_id), taskPlan]));
+
+const placeSessionsForTasks = async ({
+  userId,
+  database,
+  tasks,
+  fixedLessons,
+  existingSessions,
+  settings = {},
+  taskPlanMap = new Map(),
+  now = new Date(),
+}) => {
+  const sortedTasks = sortTasksForScheduling(tasks);
+
+  const sessions = [];
+  const activeSessionBlocks = convertSessionsToBlockedTime(existingSessions);
+
+  for (const task of sortedTasks) {
+    const taskPlan = taskPlanMap.get(Number(task.id));
+    const sessionDurations = splitTaskIntoSessions(task, settings, taskPlan);
+    const windowEnd = getTaskWindowEnd(task, now, settings);
+    let currentDay = startOfDay(now);
+    let blocksAllocated = 0;
+
+    while (blocksAllocated < sessionDurations.length && currentDay <= windowEnd) {
+      if (settings.avoid_weekends && isWeekend(currentDay)) {
+        currentDay = addDays(currentDay, 1);
+        continue;
+      }
+
+      const blockedTimes = buildBlockedTime({
+        lessons: fixedLessons,
+        sessions: activeSessionBlocks,
+        date: currentDay,
+      });
+
+      while (blocksAllocated < sessionDurations.length) {
+        const slot = findAvailableSlot({
+          task,
+          durationMinutes: sessionDurations[blocksAllocated],
+          blockedTimes,
+          currentDay,
+          windowEnd,
+          settings,
+          now,
+        });
+
+        if (!slot) break;
+
+        const insertedSession = await insertStudySession(database, {
+          userId,
+          taskId: task.id,
+          scheduledStart: slot.start,
+          scheduledEnd: slot.end,
+        });
+
+        sessions.push(insertedSession);
+        // Block the newly generated session immediately for the rest of this run.
+        const generatedBlock = { start: new Date(slot.start), end: new Date(slot.end) };
+        activeSessionBlocks.push(generatedBlock);
+        blockedTimes.push(generatedBlock);
+        blocksAllocated++;
+      }
+
+      currentDay = addDays(currentDay, 1);
+    }
+
+    if (blocksAllocated < sessionDurations.length) {
+      console.warn(`Only allocated ${blocksAllocated}/${sessionDurations.length} blocks for "${task.title}"`);
+    }
+  }
+
+  return sessions;
+};
+
 async function generateSchedule(userId, database) {
   try {
     const tasks = await getIncompleteTasks(userId, database);
@@ -244,63 +381,82 @@ async function generateSchedule(userId, database) {
 
     if (!tasks.length) return { message: 'No incomplete tasks', sessions: [] };
 
-    const sortedTasks = sortTasksForScheduling(tasks);
-
-    const sessions = [];
-    const activeSessionBlocks = convertSessionsToBlockedTime(existingSessions);
-    const now = new Date();
-
-    for (const task of sortedTasks) {
-      const sessionDurations = splitTaskIntoSessions(task);
-      const windowEnd = getTaskWindowEnd(task, now);
-      let currentDay = startOfDay(now);
-      let blocksAllocated = 0;
-
-      while (blocksAllocated < sessionDurations.length && currentDay <= windowEnd) {
-        const blockedTimes = buildBlockedTime({
-          lessons: fixedLessons,
-          sessions: activeSessionBlocks,
-          date: currentDay,
-        });
-
-        while (blocksAllocated < sessionDurations.length) {
-          const slot = findAvailableSlot({
-            task,
-            durationMinutes: sessionDurations[blocksAllocated],
-            blockedTimes,
-            currentDay,
-            windowEnd,
-            now,
-          });
-
-          if (!slot) break;
-
-          const insertedSession = await insertStudySession(database, {
-            userId,
-            taskId: task.id,
-            scheduledStart: slot.start,
-            scheduledEnd: slot.end,
-          });
-
-          sessions.push(insertedSession);
-          // Block the newly generated session immediately for the rest of this run.
-          const generatedBlock = { start: new Date(slot.start), end: new Date(slot.end) };
-          activeSessionBlocks.push(generatedBlock);
-          blockedTimes.push(generatedBlock);
-          blocksAllocated++;
-        }
-
-        currentDay = addDays(currentDay, 1);
-      }
-
-      if (blocksAllocated < sessionDurations.length) {
-        console.warn(`Only allocated ${blocksAllocated}/${sessionDurations.length} blocks for "${task.title}"`);
-      }
-    }
+    const sessions = await placeSessionsForTasks({
+      userId,
+      database,
+      tasks,
+      fixedLessons,
+      existingSessions,
+    });
 
     return { message: `Schedule generated with ${sessions.length} session(s)`, sessions };
   } catch (err) {
     console.error('Schedule generation error:', err);
+    throw err;
+  }
+}
+
+async function generateAISchedule(userId, database) {
+  try {
+    const tasks = await getIncompleteTasks(userId, database);
+
+    if (!tasks.length) {
+      return {
+        message: 'No incomplete tasks',
+        sessions: [],
+        ai_used: false,
+        fallback_used: false,
+      };
+    }
+
+    await deleteGeneratedStudySessions(userId, database);
+
+    const [fixedLessons, existingSessions, settings] = await Promise.all([
+      getFixedLessons(userId, database),
+      getExistingStudySessions(userId, database),
+      getUserSettings(userId, database),
+    ]);
+
+    try {
+      const aiPlan = await aiSchedulingService.getAISchedulingPlan({
+        tasks,
+        lessons: fixedLessons,
+        settings,
+        existingSessions,
+      });
+
+      const taskPlanMap = getTaskPlanMap(aiPlan.task_plans);
+      const sessions = await placeSessionsForTasks({
+        userId,
+        database,
+        tasks,
+        fixedLessons,
+        existingSessions,
+        settings: settings || {},
+        taskPlanMap,
+      });
+
+      return {
+        message: `AI-guided schedule generated with ${sessions.length} session(s)`,
+        sessions,
+        ai_used: true,
+        fallback_used: false,
+      };
+    } catch (err) {
+      console.warn('AI scheduling unavailable; using deterministic fallback', {
+        code: err.code || 'AI_SCHEDULING_UNAVAILABLE',
+      });
+
+      const fallbackResult = await generateSchedule(userId, database);
+      return {
+        message: `${fallbackResult.message} (AI unavailable; used deterministic fallback)`,
+        sessions: fallbackResult.sessions,
+        ai_used: false,
+        fallback_used: true,
+      };
+    }
+  } catch (err) {
+    console.error('AI schedule generation error:', err);
     throw err;
   }
 }
@@ -396,16 +552,19 @@ module.exports = {
   buildBlockedTime,
   convertLessonsToBlockedTime,
   findAvailableSlot,
+  generateAISchedule,
   generateSchedule,
   getExistingStudySessions,
   getFixedLessons,
   getIncompleteTasks,
+  getUserSettings,
   getSchedule,
   updateSession,
   getLessonBlocksForDay,
   hasOverlap,
   insertStudySession,
   isTimeAvailable,
+  placeSessionsForTasks,
   roundUpToNextInterval,
   sortTasksForScheduling,
   splitTaskIntoSessions,
