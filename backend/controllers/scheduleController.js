@@ -17,6 +17,28 @@ const generateSchedule = async (req, res) => {
   }
 };
 
+const generateAISchedule = async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    const result = await schedulerService.generateAISchedule(userId, pool);
+
+    res.json({
+      message: result.message,
+      sessions: result.sessions,
+      ai_used: result.ai_used,
+      fallback_used: result.fallback_used,
+      count: result.sessions.length,
+    });
+  } catch (err) {
+    console.error('Generate AI schedule error:', {
+      code: err.code,
+      message: err.message,
+    });
+    res.status(500).json({ error: 'Failed to generate AI-assisted schedule' });
+  }
+};
+
 const getSchedule = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -35,6 +57,7 @@ const getSchedule = async (req, res) => {
 };
 
 module.exports = {
+  generateAISchedule,
   generateSchedule,
   getSchedule,
 };
