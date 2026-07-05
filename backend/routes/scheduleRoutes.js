@@ -1,5 +1,6 @@
 // Schedule Routes
 // POST /api/schedule/generate - Generate a study schedule
+// POST /api/schedule/generate-ai - Generate an AI-assisted study schedule
 // GET /api/schedule - Get current schedule
 
 const express = require('express');
@@ -15,5 +16,8 @@ router.get('/', scheduleController.getSchedule);
 
 // Generate new schedule
 router.post('/generate', scheduleController.generateSchedule);
+
+// Generate AI-assisted schedule
+router.post('/generate-ai', scheduleController.generateAISchedule);
 
 module.exports = router;
