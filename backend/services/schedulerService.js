@@ -1,4 +1,5 @@
 const aiSchedulingService = require('./aiSchedulingService');
+const crypto = require('crypto');
 
 const startOfDay = (date) => {
   const d = new Date(date);
@@ -25,6 +26,16 @@ const addDays = (date, days) => {
 
 const SCHEDULE_INTERVAL_MINUTES = 15;
 const FALLBACK_SCHEDULE_DAYS = 7;
+const GENERATION_METHODS = {
+  RULE_BASED: 'rule_based',
+  AI_ASSISTED: 'ai_assisted',
+  RULE_BASED_FALLBACK: 'rule_based_fallback',
+};
+
+const createGenerationId = () =>
+  typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
 const roundUpToNextInterval = (date, intervalMinutes = SCHEDULE_INTERVAL_MINUTES) => {
   const rounded = new Date(date);
@@ -242,6 +253,42 @@ const splitTaskIntoSessions = (task, settings = {}, taskPlan = null) => {
   });
 };
 
+const getRuleBasedGenerationReason = (task, sessionCount) => {
+  if (Number(task.priority) >= 5) return 'High priority task scheduled before deadline';
+  if (task.requires_revision || task.task_type === 'exam_revision') {
+    return sessionCount > 1
+      ? 'Revision task split across multiple sessions'
+      : 'Revision task scheduled for focused study';
+  }
+  if (task.deadline) return 'Task scheduled before deadline using rule-based planning';
+  return 'Scheduled during available study time';
+};
+
+const buildSessionGenerationMetadata = ({
+  task,
+  taskPlan,
+  sessionCount,
+  generationMethod,
+  generationReason,
+  generationId,
+}) => {
+  if (generationMethod === GENERATION_METHODS.AI_ASSISTED && taskPlan) {
+    return {
+      generationMethod,
+      generationReason: taskPlan.reason || 'AI-assisted planning recommendation',
+      aiStrategy: taskPlan.recommended_strategy || null,
+      generationId,
+    };
+  }
+
+  return {
+    generationMethod,
+    generationReason: generationReason || getRuleBasedGenerationReason(task, sessionCount),
+    aiStrategy: null,
+    generationId,
+  };
+};
+
 const findAvailableSlot = ({
   task,
   durationMinutes,
@@ -272,14 +319,36 @@ const findAvailableSlot = ({
 };
 
 const insertStudySession = async (database, sessionData) => {
-  const { userId, taskId, scheduledStart, scheduledEnd } = sessionData;
+  const {
+    userId,
+    taskId,
+    scheduledStart,
+    scheduledEnd,
+    generationMethod = GENERATION_METHODS.RULE_BASED,
+    generationReason = null,
+    aiStrategy = null,
+    generationId = null,
+  } = sessionData;
 
   const sessionResult = await database.query(
     `INSERT INTO study_sessions
-      (user_id, task_id, scheduled_start, scheduled_end, status)
-      VALUES ($1, $2, $3, $4, 'scheduled')
-      RETURNING id, user_id, task_id, scheduled_start, scheduled_end, status`,
-    [userId, taskId, scheduledStart.toISOString(), scheduledEnd.toISOString()]
+      (
+        user_id, task_id, scheduled_start, scheduled_end, status,
+        generation_method, generation_reason, ai_strategy, generation_id
+      )
+      VALUES ($1, $2, $3, $4, 'scheduled', $5, $6, $7, $8)
+      RETURNING id, user_id, task_id, scheduled_start, scheduled_end, status,
+        generation_method, generation_reason, ai_strategy, generation_id`,
+    [
+      userId,
+      taskId,
+      scheduledStart.toISOString(),
+      scheduledEnd.toISOString(),
+      generationMethod,
+      generationReason,
+      aiStrategy,
+      generationId,
+    ]
   );
 
   return sessionResult.rows[0];
@@ -303,6 +372,9 @@ const placeSessionsForTasks = async ({
   existingSessions,
   settings = {},
   taskPlanMap = new Map(),
+  generationMethod = GENERATION_METHODS.RULE_BASED,
+  generationReason = null,
+  generationId = createGenerationId(),
   now = new Date(),
 }) => {
   const sortedTasks = sortTasksForScheduling(tasks);
@@ -313,6 +385,14 @@ const placeSessionsForTasks = async ({
   for (const task of sortedTasks) {
     const taskPlan = taskPlanMap.get(Number(task.id));
     const sessionDurations = splitTaskIntoSessions(task, settings, taskPlan);
+    const sessionMetadata = buildSessionGenerationMetadata({
+      task,
+      taskPlan,
+      sessionCount: sessionDurations.length,
+      generationMethod,
+      generationReason,
+      generationId,
+    });
     const windowEnd = getTaskWindowEnd(task, now, settings);
     let currentDay = startOfDay(now);
     let blocksAllocated = 0;
@@ -342,12 +422,13 @@ const placeSessionsForTasks = async ({
 
         if (!slot) break;
 
-        const insertedSession = await insertStudySession(database, {
-          userId,
-          taskId: task.id,
-          scheduledStart: slot.start,
-          scheduledEnd: slot.end,
-        });
+          const insertedSession = await insertStudySession(database, {
+            userId,
+            taskId: task.id,
+            scheduledStart: slot.start,
+            scheduledEnd: slot.end,
+            ...sessionMetadata,
+          });
 
         sessions.push(insertedSession);
         // Block the newly generated session immediately for the rest of this run.
@@ -387,6 +468,8 @@ async function generateSchedule(userId, database) {
       tasks,
       fixedLessons,
       existingSessions,
+      generationMethod: GENERATION_METHODS.RULE_BASED,
+      generationId: createGenerationId(),
     });
 
     return { message: `Schedule generated with ${sessions.length} session(s)`, sessions };
@@ -417,44 +500,58 @@ async function generateAISchedule(userId, database) {
       getUserSettings(userId, database),
     ]);
 
+    let aiPlan;
     try {
-      const aiPlan = await aiSchedulingService.getAISchedulingPlan({
+      aiPlan = await aiSchedulingService.getAISchedulingPlan({
         tasks,
         lessons: fixedLessons,
         settings,
         existingSessions,
       });
-
-      const taskPlanMap = getTaskPlanMap(aiPlan.task_plans);
-      const sessions = await placeSessionsForTasks({
-        userId,
-        database,
-        tasks,
-        fixedLessons,
-        existingSessions,
-        settings: settings || {},
-        taskPlanMap,
-      });
-
-      return {
-        message: `AI-guided schedule generated with ${sessions.length} session(s)`,
-        sessions,
-        ai_used: true,
-        fallback_used: false,
-      };
     } catch (err) {
       console.warn('AI scheduling unavailable; using deterministic fallback', {
         code: err.code || 'AI_SCHEDULING_UNAVAILABLE',
       });
 
-      const fallbackResult = await generateSchedule(userId, database);
+      const fallbackSessions = await placeSessionsForTasks({
+        userId,
+        database,
+        tasks,
+        fixedLessons,
+        existingSessions: await getExistingStudySessions(userId, database),
+        settings: {},
+        generationMethod: GENERATION_METHODS.RULE_BASED_FALLBACK,
+        generationReason: 'Rule-based fallback used because AI was unavailable',
+        generationId: createGenerationId(),
+      });
+
       return {
-        message: `${fallbackResult.message} (AI unavailable; used deterministic fallback)`,
-        sessions: fallbackResult.sessions,
+        message: `Schedule generated with ${fallbackSessions.length} session(s) (AI unavailable; used deterministic fallback)`,
+        sessions: fallbackSessions,
         ai_used: false,
         fallback_used: true,
       };
     }
+
+    const taskPlanMap = getTaskPlanMap(aiPlan.task_plans);
+    const sessions = await placeSessionsForTasks({
+      userId,
+      database,
+      tasks,
+      fixedLessons,
+      existingSessions,
+      settings: settings || {},
+      taskPlanMap,
+      generationMethod: GENERATION_METHODS.AI_ASSISTED,
+      generationId: createGenerationId(),
+    });
+
+    return {
+      message: `AI-guided schedule generated with ${sessions.length} session(s)`,
+      sessions,
+      ai_used: true,
+      fallback_used: false,
+    };
   } catch (err) {
     console.error('AI schedule generation error:', err);
     throw err;
@@ -467,7 +564,8 @@ const getSchedule = async (userId, database) => {
       database.query(
         `SELECT
           ss.id, ss.user_id, ss.task_id, ss.scheduled_start, ss.scheduled_end,
-          ss.actual_start, ss.actual_end, ss.status, ss.created_at,
+          ss.actual_start, ss.actual_end, ss.status, ss.generation_method,
+          ss.generation_reason, ss.ai_strategy, ss.generation_id, ss.created_at,
           t.title AS task_title, t.priority AS task_priority, t.module_id, m.module_code, m.module_name, m.color AS module_color
         FROM study_sessions ss
         LEFT JOIN tasks t ON ss.task_id = t.id
@@ -535,7 +633,9 @@ const updateSession = async (userId, sessionId, fields, database) => {
     `UPDATE study_sessions
      SET ${updates.join(', ')}
      WHERE id = $${sessionIdParam} AND user_id = $${userIdParam}
-     RETURNING id, user_id, task_id, scheduled_start, scheduled_end, actual_start, actual_end, status, created_at, updated_at`,
+     RETURNING id, user_id, task_id, scheduled_start, scheduled_end, actual_start,
+       actual_end, status, generation_method, generation_reason, ai_strategy,
+       generation_id, created_at, updated_at`,
     params
   );
  
