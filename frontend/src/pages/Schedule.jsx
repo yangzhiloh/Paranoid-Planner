@@ -77,6 +77,21 @@ const formatDateTime = (value) => {
     : 'Not set';
 };
 
+const getAIScheduleNotice = (data = {}) => {
+  const count = data.count ?? data.sessions?.length ?? 0;
+  const sessionLabel = `${count} study session${count === 1 ? '' : 's'}`;
+
+  if (data.fallback_used) {
+    return `Rule-based fallback used: AI unavailable, generated ${sessionLabel} instead.`;
+  }
+
+  if (data.ai_used) {
+    return `AI-assisted schedule generated with ${sessionLabel}.`;
+  }
+
+  return data.message || `Schedule generated with ${sessionLabel}.`;
+};
+
 // Lessons become recurring, read-only FullCalendar events.
 const lessonToEvent = (lesson = {}, index = 0) => {
   const activityType = String(lesson.activity_type || 'LEC').toUpperCase();
@@ -162,6 +177,7 @@ export const Schedule = () => {
   const [sessions, setSessions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
+  const [aiGenerating, setAiGenerating] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const autoGenerationRef = useRef({ inFlight: false, signature: '' });
@@ -247,7 +263,7 @@ export const Schedule = () => {
   }, [lessons, sessions]);
 
   const handleGenerateSchedule = async () => {
-    if (generating) return;
+    if (generating || aiGenerating) return;
 
     try {
       setGenerating(true);
@@ -266,6 +282,30 @@ export const Schedule = () => {
       setError(err.response?.data?.error || 'Failed to refresh the schedule. Please try again.');
     } finally {
       setGenerating(false);
+    }
+  };
+
+  const handleGenerateAISchedule = async () => {
+    if (aiGenerating || generating) return;
+
+    try {
+      setAiGenerating(true);
+      setError('');
+      setNotice('');
+      setAutoUpdateError('');
+
+      const response = await scheduleAPI.generateAISchedule();
+      const scheduleData = await fetchSchedule();
+      const taskResponse = await tasksAPI.getTasks();
+      const currentSignature = `${buildTaskSignature(taskResponse.data?.tasks || [])}:${buildLessonSignature(scheduleData.lessons)}`;
+
+      localStorage.setItem(AUTO_SCHEDULE_SIGNATURE_KEY, currentSignature);
+      autoGenerationRef.current.signature = currentSignature;
+      setNotice(getAIScheduleNotice(response.data || {}));
+    } catch (err) {
+      setError(err.response?.data?.error || 'AI schedule generation failed. Please try Refresh Schedule.');
+    } finally {
+      setAiGenerating(false);
     }
   };
 
@@ -299,6 +339,8 @@ export const Schedule = () => {
     );
   };
 
+  const scheduleActionLoading = generating || aiGenerating;
+
   return (
     <div className="replica-stage">
       <div className="replica-shell">
@@ -317,15 +359,32 @@ export const Schedule = () => {
                 </p>
               </div>
 
-              <PrimaryButton
-                type="button"
-                onClick={handleGenerateSchedule}
-                loading={generating}
-                disabled={generating}
-                className="w-full shrink-0 px-6 py-3 font-semibold sm:w-auto"
-              >
-                {generating ? 'Updating schedule...' : 'Refresh Schedule'}
-              </PrimaryButton>
+              <div className="flex w-full flex-col gap-3 sm:w-auto sm:flex-row">
+                <PrimaryButton
+                  type="button"
+                  onClick={handleGenerateAISchedule}
+                  loading={aiGenerating}
+                  disabled={scheduleActionLoading}
+                  className="w-full shrink-0 px-6 py-3 font-semibold sm:w-auto"
+                  style={{
+                    boxShadow: aiGenerating
+                      ? '0 16px 40px rgba(245,158,11,0.16)'
+                      : '0 18px 46px rgba(245,158,11,0.30)',
+                  }}
+                >
+                  {aiGenerating ? 'Planning with AI...' : 'Plan with AI'}
+                </PrimaryButton>
+                <PrimaryButton
+                  type="button"
+                  variant="secondary"
+                  onClick={handleGenerateSchedule}
+                  loading={generating}
+                  disabled={scheduleActionLoading}
+                  className="w-full shrink-0 px-6 py-3 font-semibold sm:w-auto"
+                >
+                  {generating ? 'Updating schedule...' : 'Refresh Schedule'}
+                </PrimaryButton>
+              </div>
             </div>
           </header>
 
