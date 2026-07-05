@@ -119,6 +119,7 @@ test('returns a validated plan from a configured provider response', async () =>
         reason: 'Medium difficulty assignment with enough time to split work',
       },
     ],
+    warnings: [],
   });
 
   resetAIEnvironment();
