@@ -92,6 +92,15 @@ const validateAISchedulePlan = (aiPlan, tasks = [], settings = {}) => {
       );
     }
 
+    const totalMinutes = Number(taskPlan.recommended_total_minutes);
+    const sessionCount = Number(taskPlan.recommended_session_count);
+    if (totalMinutes > sessionCount * normalizedSessionMinutes) {
+      warnings.push(
+        `Task plan for task_id ${taskId} cannot fit recommended_total_minutes into recommended_session_count`
+      );
+      return validPlans;
+    }
+
     if (!isNonEmptyString(taskPlan.recommended_strategy)) {
       warnings.push(`Task plan for task_id ${taskId} has invalid recommended_strategy`);
       return validPlans;
@@ -104,8 +113,8 @@ const validateAISchedulePlan = (aiPlan, tasks = [], settings = {}) => {
 
     validPlans.push({
       task_id: taskId,
-      recommended_total_minutes: Number(taskPlan.recommended_total_minutes),
-      recommended_session_count: Number(taskPlan.recommended_session_count),
+      recommended_total_minutes: totalMinutes,
+      recommended_session_count: sessionCount,
       recommended_session_minutes: normalizedSessionMinutes,
       recommended_strategy: taskPlan.recommended_strategy.trim(),
       reason: taskPlan.reason.trim(),

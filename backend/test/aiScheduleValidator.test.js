@@ -72,7 +72,7 @@ test('validateAISchedulePlan rejects unreasonable short sessions and caps long s
         },
         {
           task_id: 2,
-          recommended_total_minutes: 300,
+          recommended_total_minutes: 180,
           recommended_session_count: 2,
           recommended_session_minutes: 180,
           recommended_strategy: 'long sessions',
@@ -90,6 +90,29 @@ test('validateAISchedulePlan rejects unreasonable short sessions and caps long s
   assert.equal(result.taskPlans[0].recommended_session_minutes, 90);
   assert.match(result.warnings.join(' '), /shorter than 15 minutes/);
   assert.match(result.warnings.join(' '), /capped at 90/);
+});
+
+test('validateAISchedulePlan rejects impossible session counts', () => {
+  const result = validateAISchedulePlan(
+    {
+      task_plans: [
+        {
+          task_id: 1,
+          recommended_total_minutes: 300,
+          recommended_session_count: 2,
+          recommended_session_minutes: 90,
+          recommended_strategy: 'not enough sessions',
+          reason: 'Total minutes cannot fit',
+        },
+      ],
+    },
+    TASKS,
+    { max_session_minutes: 90 }
+  );
+
+  assert.equal(result.valid, false);
+  assert.match(result.warnings.join(' '), /cannot fit recommended_total_minutes/);
+  assert.match(result.warnings.join(' '), /No valid AI task plans returned/);
 });
 
 test('validateAISchedulePlan returns fallback signal when no valid plans remain', () => {
