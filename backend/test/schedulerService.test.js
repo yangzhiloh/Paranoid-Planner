@@ -6,6 +6,7 @@ const {
   findAvailableSlot,
   generateAISchedule,
   generateSchedule,
+  getSchedule,
   hasOverlap,
   splitTaskIntoSessions,
 } = require('../services/schedulerService');
@@ -56,6 +57,10 @@ const makeMockDatabase = ({ tasks, lessons, existingSessions = [], settings = nu
           scheduled_start: params[2],
           scheduled_end: params[3],
           status: 'scheduled',
+          generation_method: params[4],
+          generation_reason: params[5],
+          ai_strategy: params[6],
+          generation_id: params[7],
         };
         insertedSessions.push(session);
         return { rows: [session] };
@@ -160,6 +165,10 @@ test('generateSchedule deletes old scheduled sessions and avoids fixed lessons',
   assert.equal(result.sessions.length, 1);
   assert.equal(database.insertedSessions.length, 1);
   assert.equal(database.calls.some((call) => call.sql.includes('DELETE FROM study_sessions')), true);
+  assert.equal(database.insertedSessions[0].generation_method, 'rule_based');
+  assert.match(database.insertedSessions[0].generation_reason, /rule-based planning|before deadline|available study time/i);
+  assert.equal(database.insertedSessions[0].ai_strategy, null);
+  assert.equal(typeof database.insertedSessions[0].generation_id, 'string');
 
   const inserted = database.insertedSessions[0];
   const insertedStart = new Date(inserted.scheduled_start);
@@ -242,6 +251,10 @@ test('generateAISchedule uses AI task plans while deterministic code inserts ses
   assert.equal(result.ai_used, true);
   assert.equal(result.fallback_used, false);
   assert.equal(result.sessions.length, 2);
+  assert.equal(database.insertedSessions[0].generation_method, 'ai_assisted');
+  assert.equal(database.insertedSessions[0].generation_reason, 'AI recommends focused blocks');
+  assert.equal(database.insertedSessions[0].ai_strategy, 'two shorter sessions');
+  assert.equal(database.insertedSessions[0].generation_id, database.insertedSessions[1].generation_id);
 
   const insertedDurations = database.insertedSessions.map((session) => (
     new Date(session.scheduled_end) - new Date(session.scheduled_start)
@@ -289,8 +302,37 @@ test('generateAISchedule falls back to deterministic scheduling when AI is unava
   assert.equal(result.fallback_used, true);
   assert.equal(result.sessions.length, 1);
   assert.equal(database.insertedSessions.length, 1);
+  assert.equal(database.insertedSessions[0].generation_method, 'rule_based_fallback');
+  assert.equal(
+    database.insertedSessions[0].generation_reason,
+    'Rule-based fallback used because AI was unavailable'
+  );
 
   resetAIEnvironment();
+});
+
+test('getSchedule selects session generation metadata', async () => {
+  const database = makeMockDatabase({
+    tasks: [],
+    lessons: [],
+    existingSessions: [
+      {
+        id: 1,
+        generation_method: 'ai_assisted',
+        generation_reason: 'AI recommends focused blocks',
+        ai_strategy: 'two shorter sessions',
+        generation_id: 'generation-1',
+      },
+    ],
+  });
+
+  await getSchedule(42, database);
+
+  const scheduleQuery = database.calls.find((call) => call.sql.includes('FROM study_sessions ss'));
+  assert.match(scheduleQuery.sql, /ss\.generation_method/);
+  assert.match(scheduleQuery.sql, /ss\.generation_reason/);
+  assert.match(scheduleQuery.sql, /ss\.ai_strategy/);
+  assert.match(scheduleQuery.sql, /ss\.generation_id/);
 });
 
 const startOfCurrentDay = (date) => {
