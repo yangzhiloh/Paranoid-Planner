@@ -107,6 +107,9 @@ export const scheduleAPI = {
   generateSchedule: () =>
     api.post('/schedule/generate'),
 
+  generateAISchedule: () =>
+    api.post('/schedule/generate-ai'),
+
   getSchedule: () =>
     api.get('/schedule'),
 };
