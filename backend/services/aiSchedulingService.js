@@ -3,6 +3,7 @@ const {
   buildAISchedulePrompt,
   buildPromptData,
 } = require('./aiSchedulePromptBuilder');
+const { validateAISchedulePlan } = require('./aiScheduleValidator');
 
 class AISchedulingError extends Error {
   constructor(message, code, statusCode = 503) {
@@ -82,69 +83,18 @@ const parseProviderResponse = (providerResponse) => {
   throw new AISchedulingError('AI provider response did not include JSON content', 'AI_NO_JSON_CONTENT', 502);
 };
 
-const isPositiveNumber = (value) => Number.isFinite(Number(value)) && Number(value) > 0;
-const isPositiveInteger = (value) => isPositiveNumber(value) && Number.isInteger(Number(value));
+const validateAIPlan = (plan, tasks = [], settings = {}) => {
+  const validation = validateAISchedulePlan(plan, tasks, settings);
 
-const validateAIPlan = (plan) => {
-  if (!plan || typeof plan !== 'object' || !Array.isArray(plan.task_plans)) {
-    throw new AISchedulingError('AI plan must include a task_plans array', 'AI_INVALID_PLAN', 502);
+  if (!validation.valid) {
+    const error = new AISchedulingError(validation.warnings.join('; '), 'AI_INVALID_PLAN', 502);
+    error.warnings = validation.warnings;
+    throw error;
   }
 
-  plan.task_plans.forEach((taskPlan, index) => {
-    if (!taskPlan || typeof taskPlan !== 'object') {
-      throw new AISchedulingError(`AI task plan at index ${index} must be an object`, 'AI_INVALID_PLAN', 502);
-    }
-
-    if (!Number.isInteger(Number(taskPlan.task_id))) {
-      throw new AISchedulingError(`AI task plan at index ${index} is missing a valid task_id`, 'AI_INVALID_PLAN', 502);
-    }
-
-    const positiveFields = ['recommended_total_minutes', 'recommended_session_minutes'];
-
-    positiveFields.forEach((field) => {
-      if (!isPositiveNumber(taskPlan[field])) {
-        throw new AISchedulingError(
-          `AI task plan for task ${taskPlan.task_id} is missing a positive ${field}`,
-          'AI_INVALID_PLAN',
-          502
-        );
-      }
-    });
-
-    if (!isPositiveInteger(taskPlan.recommended_session_count)) {
-      throw new AISchedulingError(
-        `AI task plan for task ${taskPlan.task_id} is missing a positive integer recommended_session_count`,
-        'AI_INVALID_PLAN',
-        502
-      );
-    }
-
-    if (typeof taskPlan.recommended_strategy !== 'string' || !taskPlan.recommended_strategy.trim()) {
-      throw new AISchedulingError(
-        `AI task plan for task ${taskPlan.task_id} is missing recommended_strategy`,
-        'AI_INVALID_PLAN',
-        502
-      );
-    }
-
-    if (typeof taskPlan.reason !== 'string' || !taskPlan.reason.trim()) {
-      throw new AISchedulingError(
-        `AI task plan for task ${taskPlan.task_id} is missing reason`,
-        'AI_INVALID_PLAN',
-        502
-      );
-    }
-  });
-
   return {
-    task_plans: plan.task_plans.map((taskPlan) => ({
-      task_id: Number(taskPlan.task_id),
-      recommended_total_minutes: Number(taskPlan.recommended_total_minutes),
-      recommended_session_count: Number(taskPlan.recommended_session_count),
-      recommended_session_minutes: Number(taskPlan.recommended_session_minutes),
-      recommended_strategy: taskPlan.recommended_strategy.trim(),
-      reason: taskPlan.reason.trim(),
-    })),
+    task_plans: validation.taskPlans,
+    warnings: validation.warnings,
   };
 };
 
@@ -240,7 +190,7 @@ const getAISchedulingPlan = async ({ tasks, lessons, settings, existingSessions 
     const providerResponse = await fetchProviderResponse(config, prompt);
     const parsedPlan = parseProviderResponse(providerResponse);
 
-    return validateAIPlan(parsedPlan);
+    return validateAIPlan(parsedPlan, tasks, settings);
   } catch (err) {
     if (err instanceof AISchedulingError) {
       safeLogAIError('AI scheduling unavailable:', err);
