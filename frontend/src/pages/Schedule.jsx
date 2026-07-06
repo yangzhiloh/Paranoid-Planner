@@ -92,6 +92,22 @@ const getAIScheduleNotice = (data = {}) => {
   return data.message || `Schedule generated with ${sessionLabel}.`;
 };
 
+const getGenerationMethodLabel = (method) => {
+  const labels = {
+    ai_assisted: 'AI-assisted',
+    rule_based: 'Rule-based',
+    rule_based_fallback: 'Rule-based fallback',
+  };
+
+  return labels[method] || 'Rule-based';
+};
+
+const getDefaultGenerationReason = (method) => {
+  if (method === 'ai_assisted') return 'AI-assisted planning recommendation';
+  if (method === 'rule_based_fallback') return 'Rule-based fallback used';
+  return 'Rule-based schedule generation';
+};
+
 // Lessons become recurring, read-only FullCalendar events.
 const lessonToEvent = (lesson = {}, index = 0) => {
   const activityType = String(lesson.activity_type || 'LEC').toUpperCase();
@@ -168,6 +184,9 @@ const sessionToEvent = (session = {}, index = 0) => {
       moduleName,
       assignmentTitle,
       priority,
+      generationMethod: session.generation_method,
+      generationReason: session.generation_reason,
+      aiStrategy: session.ai_strategy,
     },
   };
 };
@@ -180,6 +199,7 @@ export const Schedule = () => {
   const [aiGenerating, setAiGenerating] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [selectedEventDetails, setSelectedEventDetails] = useState(null);
   const autoGenerationRef = useRef({ inFlight: false, signature: '' });
   const [autoUpdating, setAutoUpdating] = useState(false);
   const [autoUpdateError, setAutoUpdateError] = useState('');
@@ -196,6 +216,7 @@ export const Schedule = () => {
 
       setLessons(nextLessons);
       setSessions(nextSessions);
+      setSelectedEventDetails(null);
 
       return { lessons: nextLessons, sessions: nextSessions };
     } catch (err) {
@@ -320,6 +341,36 @@ export const Schedule = () => {
     el.title = `${details.moduleCode} - ${details.moduleName}\n${details.assignmentTitle}\n${formatDateTime(event.start)} - ${formatDateTime(event.end)}`;
   };
 
+  const handleEventClick = ({ event }) => {
+    const details = event.extendedProps || {};
+
+    if (details.eventType === 'lesson') {
+      setSelectedEventDetails({
+        eventType: 'lesson',
+        title: event.title,
+        moduleCode: details.moduleCode,
+        moduleName: details.moduleName,
+        activityLabel: details.activityLabel,
+        startTime: details.startTime,
+        endTime: details.endTime,
+      });
+      return;
+    }
+
+    setSelectedEventDetails({
+      eventType: 'session',
+      title: event.title,
+      moduleCode: details.moduleCode,
+      moduleName: details.moduleName,
+      assignmentTitle: details.assignmentTitle,
+      start: event.start,
+      end: event.end,
+      generationMethod: details.generationMethod,
+      generationReason: details.generationReason,
+      aiStrategy: details.aiStrategy,
+    });
+  };
+
   const handleSessionMove = (changeInfo) => {
     changeInfo.revert();
     setNotice('Session rescheduling is ready for a future backend update.');
@@ -432,6 +483,96 @@ export const Schedule = () => {
             </div>
           )}
 
+          {selectedEventDetails && (
+            <section
+              className="replica-card mb-3 border-[#5a3524]/70 bg-[#160d0a]/90 p-4 sm:p-5"
+              aria-label="Selected schedule event details"
+            >
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                <div className="min-w-0">
+                  <span className="card-kicker">
+                    {selectedEventDetails.eventType === 'session' ? 'Study session' : 'Fixed timetable'}
+                  </span>
+                  <h2 className="mb-0 mt-1 text-lg font-bold text-[#fff7ed]">
+                    {selectedEventDetails.eventType === 'session'
+                      ? selectedEventDetails.assignmentTitle || 'Study session'
+                      : selectedEventDetails.title}
+                  </h2>
+                  <p className="mb-0 mt-1 text-sm text-[#b9a99d]">
+                    {selectedEventDetails.moduleCode} - {selectedEventDetails.moduleName}
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setSelectedEventDetails(null)}
+                  className="min-h-[44px] rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 text-sm font-semibold text-[#f5e6d3] transition hover:bg-white/[0.08]"
+                >
+                  Close
+                </button>
+              </div>
+
+              {selectedEventDetails.eventType === 'session' ? (
+                <div className="mt-4 grid gap-3 md:grid-cols-2">
+                  <div className="rounded-lg border border-white/10 bg-[#21130f]/75 p-3">
+                    <p className="mb-1 text-xs font-semibold uppercase tracking-[0.14em] text-[#c9a77a]">
+                      Time
+                    </p>
+                    <p className="mb-0 text-sm font-semibold text-[#fff7ed]">
+                      {formatDateTime(selectedEventDetails.start)} - {formatDateTime(selectedEventDetails.end)}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-white/10 bg-[#21130f]/75 p-3">
+                    <p className="mb-1 text-xs font-semibold uppercase tracking-[0.14em] text-[#c9a77a]">
+                      Generation method
+                    </p>
+                    <p className="mb-0 text-sm font-semibold text-[#fff7ed]">
+                      {getGenerationMethodLabel(selectedEventDetails.generationMethod)}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-white/10 bg-[#21130f]/75 p-3 md:col-span-2">
+                    <p className="mb-1 text-xs font-semibold uppercase tracking-[0.14em] text-[#c9a77a]">
+                      Scheduling reason
+                    </p>
+                    <p className="mb-0 text-sm text-[#f5e6d3]">
+                      {selectedEventDetails.generationReason ||
+                        getDefaultGenerationReason(selectedEventDetails.generationMethod)}
+                    </p>
+                  </div>
+                  {selectedEventDetails.aiStrategy && (
+                    <div className="rounded-lg border border-amber-300/20 bg-amber-950/20 p-3 md:col-span-2">
+                      <p className="mb-1 text-xs font-semibold uppercase tracking-[0.14em] text-[#f2c27c]">
+                        AI strategy
+                      </p>
+                      <p className="mb-0 text-sm text-amber-100">
+                        {selectedEventDetails.aiStrategy}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="mt-4 grid gap-3 md:grid-cols-2">
+                  <div className="rounded-lg border border-white/10 bg-[#21130f]/75 p-3">
+                    <p className="mb-1 text-xs font-semibold uppercase tracking-[0.14em] text-[#c9a77a]">
+                      Lesson type
+                    </p>
+                    <p className="mb-0 text-sm font-semibold text-[#fff7ed]">
+                      {selectedEventDetails.activityLabel}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-white/10 bg-[#21130f]/75 p-3">
+                    <p className="mb-1 text-xs font-semibold uppercase tracking-[0.14em] text-[#c9a77a]">
+                      Time
+                    </p>
+                    <p className="mb-0 text-sm font-semibold text-[#fff7ed]">
+                      {selectedEventDetails.startTime} - {selectedEventDetails.endTime}
+                    </p>
+                  </div>
+                </div>
+              )}
+            </section>
+          )}
+
           <section className="schedule-calendar replica-card p-3 sm:p-6" aria-label="Study calendar">
             {loading ? (
               <div className="grid min-h-[560px] place-items-center text-center" aria-live="polite">
@@ -457,6 +598,7 @@ export const Schedule = () => {
                   }}
                   events={calendarEvents}
                   editable
+                  eventClick={handleEventClick}
                   eventDrop={handleSessionMove}
                   eventResize={handleSessionMove}
                   eventContent={renderEventContent}
