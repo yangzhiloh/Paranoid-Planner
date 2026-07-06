@@ -227,10 +227,25 @@ const getTaskSessionMaxMinutes = (task = {}, settings = {}) => {
     : settingsMax;
 };
 
+const getEstimatedMinutes = (task = {}, taskPlan = null) =>
+  Number(taskPlan?.recommended_total_minutes) ||
+  Number(task.ai_estimated_minutes) ||
+  Number(task.estimated_minutes) ||
+  60;
+
 const isRevisionTask = (task = {}) =>
   task.task_type === 'exam_revision' ||
   task.requires_revision === true ||
   Number(task.revision_sessions_needed) > 0;
+
+const isAssignmentWorkTask = (task = {}, settings = {}) => {
+  const taskType = task.task_type;
+  const estimatedMinutes = getEstimatedMinutes(task);
+
+  return taskType === 'assignment' ||
+    taskType === 'project' ||
+    (taskType === 'other' && estimatedMinutes > getTaskSessionMaxMinutes(task, settings));
+};
 
 const buildBalancedSessionDurations = (totalMinutes, sessionCount, maxSessionMinutes) => {
   let remainingMinutes = totalMinutes;
@@ -245,10 +260,7 @@ const buildBalancedSessionDurations = (totalMinutes, sessionCount, maxSessionMin
 };
 
 const splitTaskIntoSessions = (task, settings = {}, taskPlan = null) => {
-  const estimatedMinutes = taskPlan?.recommended_total_minutes ||
-    task.ai_estimated_minutes ||
-    task.estimated_minutes ||
-    60;
+  const estimatedMinutes = getEstimatedMinutes(task, taskPlan);
   const recommendedSessionCount = Number(taskPlan?.recommended_session_count);
   const recommendedSessionMinutes = Number(taskPlan?.recommended_session_minutes);
   const maxSessionMinutes = getTaskSessionMaxMinutes(task, settings);
@@ -278,6 +290,11 @@ const splitTaskIntoSessions = (task, settings = {}, taskPlan = null) => {
     return buildBalancedSessionDurations(estimatedMinutes, sessionCount, maxSessionMinutes);
   }
 
+  if (isAssignmentWorkTask(task, settings)) {
+    const sessionCount = Math.ceil(estimatedMinutes / maxSessionMinutes);
+    return buildBalancedSessionDurations(estimatedMinutes, sessionCount, maxSessionMinutes);
+  }
+
   const blockDuration = Math.min(maxSessionMinutes, estimatedMinutes);
   const numBlocks = Math.ceil(estimatedMinutes / blockDuration);
 
@@ -288,7 +305,6 @@ const splitTaskIntoSessions = (task, settings = {}, taskPlan = null) => {
 };
 
 const getRuleBasedGenerationReason = (task, sessionCount) => {
-  if (Number(task.priority) >= 5) return 'High priority task scheduled before deadline';
   if (task.task_type === 'exam_revision') {
     return sessionCount > 1
       ? 'Exam revision scheduled with spaced practice windows'
@@ -299,6 +315,20 @@ const getRuleBasedGenerationReason = (task, sessionCount) => {
       ? 'Revision task split across multiple sessions before deadline'
       : 'Revision task scheduled for focused study';
   }
+  if (task.task_type === 'project') {
+    return sessionCount > 1
+      ? 'Project scheduled in longer focused work blocks'
+      : 'Project scheduled as a focused work block';
+  }
+  if (task.task_type === 'assignment') {
+    return sessionCount > 1
+      ? 'Assignment split into multiple work sessions before deadline'
+      : 'Assignment scheduled as one focused work block';
+  }
+  if (task.task_type === 'other' && sessionCount > 1) {
+    return 'Assignment-style task split into multiple work sessions before deadline';
+  }
+  if (Number(task.priority) >= 5) return 'High priority task scheduled before deadline';
   if (task.deadline) return 'Task scheduled before deadline using rule-based planning';
   return 'Scheduled during available study time';
 };
@@ -417,7 +447,7 @@ const getCandidateSchedulingDays = ({ now, windowEnd, settings = {} }) => {
   return days;
 };
 
-const selectRevisionTargetDays = (candidateDays, sessionCount) => {
+const selectDistributedTargetDays = (candidateDays, sessionCount) => {
   if (candidateDays.length <= sessionCount) return candidateDays;
 
   const selectedDays = [];
@@ -483,7 +513,7 @@ const insertScheduledBlock = async ({
   return insertedSession;
 };
 
-const placeRevisionSessionsForTask = async ({
+const placeDistributedSessionsForTask = async ({
   userId,
   database,
   task,
@@ -496,7 +526,7 @@ const placeRevisionSessionsForTask = async ({
 }) => {
   const windowEnd = getTaskWindowEnd(task, now, settings);
   const candidateDays = getCandidateSchedulingDays({ now, windowEnd, settings });
-  const targetDays = selectRevisionTargetDays(candidateDays, sessionDurations.length);
+  const targetDays = selectDistributedTargetDays(candidateDays, sessionDurations.length);
   const sessions = [];
   let blocksAllocated = 0;
 
@@ -585,7 +615,7 @@ const placeSessionsForTasks = async ({
     let blocksAllocated = 0;
 
     if (isRevisionTask(task)) {
-      const revisionPlacement = await placeRevisionSessionsForTask({
+      const revisionPlacement = await placeDistributedSessionsForTask({
         userId,
         database,
         task,
@@ -599,6 +629,29 @@ const placeSessionsForTasks = async ({
 
       sessions.push(...revisionPlacement.sessions);
       blocksAllocated = revisionPlacement.blocksAllocated;
+
+      if (blocksAllocated < sessionDurations.length) {
+        console.warn(`Only allocated ${blocksAllocated}/${sessionDurations.length} blocks for "${task.title}"`);
+      }
+
+      continue;
+    }
+
+    if (isAssignmentWorkTask(task, settings) && sessionDurations.length > 1) {
+      const workWindowPlacement = await placeDistributedSessionsForTask({
+        userId,
+        database,
+        task,
+        sessionDurations,
+        fixedLessons,
+        activeSessionBlocks,
+        settings,
+        sessionMetadata,
+        now,
+      });
+
+      sessions.push(...workWindowPlacement.sessions);
+      blocksAllocated = workWindowPlacement.blocksAllocated;
 
       if (blocksAllocated < sessionDurations.length) {
         console.warn(`Only allocated ${blocksAllocated}/${sessionDurations.length} blocks for "${task.title}"`);
