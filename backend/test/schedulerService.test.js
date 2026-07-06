@@ -79,6 +79,25 @@ const resetAIEnvironment = () => {
 test('splitTaskIntoSessions preserves two-hour default blocks', () => {
   assert.deepEqual(splitTaskIntoSessions({ estimated_minutes: 250 }), [120, 120, 10]);
   assert.deepEqual(splitTaskIntoSessions({ estimated_minutes: 90 }), [90]);
+  assert.deepEqual(
+    splitTaskIntoSessions({
+      estimated_minutes: 180,
+      task_type: 'exam_revision',
+      revision_sessions_needed: 3,
+    }),
+    [60, 60, 60]
+  );
+  assert.deepEqual(
+    splitTaskIntoSessions(
+      {
+        estimated_minutes: 300,
+        requires_revision: true,
+        revision_sessions_needed: 2,
+      },
+      { max_session_minutes: 120 }
+    ),
+    [100, 100, 100]
+  );
 });
 
 test('findAvailableSlot skips blocked time', () => {
@@ -185,6 +204,60 @@ test('generateSchedule deletes old scheduled sessions and avoids fixed lessons',
   });
 
   assert.equal(hasOverlap(insertedStart, insertedEnd, lessonBlocks), false);
+});
+
+test('generateSchedule spreads exam revision sessions across multiple days', async () => {
+  const now = new Date();
+  const userId = 42;
+  const database = makeMockDatabase({
+    tasks: [
+      {
+        id: 17,
+        user_id: userId,
+        module_id: 3,
+        title: 'Final exam revision',
+        deadline: addDays(now, 6).toISOString(),
+        estimated_minutes: 180,
+        priority: 3,
+        status: 'pending',
+        preferred_start_time: '09:00',
+        preferred_end_time: '22:00',
+        task_type: 'exam_revision',
+        requires_revision: true,
+        revision_sessions_needed: 3,
+      },
+    ],
+    lessons: [],
+    settings: {
+      preferred_study_start_time: '09:00',
+      preferred_study_end_time: '22:00',
+      max_session_minutes: 120,
+      break_minutes: 15,
+      avoid_weekends: false,
+      deadline_buffer_days: 0,
+    },
+  });
+
+  const result = await generateSchedule(userId, database);
+
+  assert.equal(result.sessions.length, 3);
+  assert.equal(database.insertedSessions.length, 3);
+  assert.equal(
+    new Set(database.insertedSessions.map((session) => (
+      new Date(session.scheduled_start).toDateString()
+    ))).size >= 2,
+    true
+  );
+  assert.deepEqual(
+    database.insertedSessions.map((session) => (
+      (new Date(session.scheduled_end) - new Date(session.scheduled_start)) / 60000
+    )),
+    [60, 60, 60]
+  );
+  assert.equal(
+    database.insertedSessions[0].generation_reason,
+    'Exam revision scheduled with spaced practice windows'
+  );
 });
 
 test('generateAISchedule uses AI task plans while deterministic code inserts sessions', async () => {
