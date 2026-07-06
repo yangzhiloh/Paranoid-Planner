@@ -98,6 +98,26 @@ test('splitTaskIntoSessions preserves two-hour default blocks', () => {
     ),
     [100, 100, 100]
   );
+  assert.deepEqual(
+    splitTaskIntoSessions(
+      {
+        estimated_minutes: 300,
+        task_type: 'project',
+      },
+      { max_session_minutes: 150 }
+    ),
+    [150, 150]
+  );
+  assert.deepEqual(
+    splitTaskIntoSessions(
+      {
+        estimated_minutes: 90,
+        task_type: 'assignment',
+      },
+      { max_session_minutes: 150 }
+    ),
+    [90]
+  );
 });
 
 test('findAvailableSlot skips blocked time', () => {
@@ -257,6 +277,58 @@ test('generateSchedule spreads exam revision sessions across multiple days', asy
   assert.equal(
     database.insertedSessions[0].generation_reason,
     'Exam revision scheduled with spaced practice windows'
+  );
+});
+
+test('generateSchedule splits long projects into focused work windows', async () => {
+  const now = new Date();
+  const userId = 42;
+  const database = makeMockDatabase({
+    tasks: [
+      {
+        id: 18,
+        user_id: userId,
+        module_id: 3,
+        title: 'Semester project',
+        deadline: addDays(now, 7).toISOString(),
+        estimated_minutes: 300,
+        priority: 3,
+        status: 'pending',
+        preferred_start_time: '00:00',
+        preferred_end_time: '23:59',
+        task_type: 'project',
+      },
+    ],
+    lessons: [],
+    settings: {
+      preferred_study_start_time: '09:00',
+      preferred_study_end_time: '23:59',
+      max_session_minutes: 150,
+      break_minutes: 15,
+      avoid_weekends: false,
+      deadline_buffer_days: 1,
+    },
+  });
+
+  const result = await generateSchedule(userId, database);
+
+  assert.equal(result.sessions.length, 2);
+  assert.equal(database.insertedSessions.length, 2);
+  assert.equal(
+    new Set(database.insertedSessions.map((session) => (
+      new Date(session.scheduled_start).toDateString()
+    ))).size,
+    2
+  );
+  assert.deepEqual(
+    database.insertedSessions.map((session) => (
+      (new Date(session.scheduled_end) - new Date(session.scheduled_start)) / 60000
+    )),
+    [150, 150]
+  );
+  assert.equal(
+    database.insertedSessions[0].generation_reason,
+    'Project scheduled in longer focused work blocks'
   );
 });
 
