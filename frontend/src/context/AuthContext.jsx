@@ -2,44 +2,48 @@
 // Manages global authentication state
 
 import { createContext, useState, useEffect, useContext } from 'react';
-import { authAPI } from '../api/api';
+import { authAPI, setAccessToken } from '../api/api';
 
 export const AuthContext = createContext();
 
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
-  const [token, setToken] = useState(localStorage.getItem('token'));
-  const [isAuthenticated, setIsAuthenticated] = useState(!!localStorage.getItem('token'));
+  const [token, setToken] = useState(null);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
+  // Keep the API client's in-memory token and React state in sync
+  const startSession = (data) => {
+    setAccessToken(data.token);
+    setToken(data.token);
+    setUser(data.user);
+    setIsAuthenticated(true);
+  };
+
+  const clearSession = () => {
+    setAccessToken(null);
+    setToken(null);
+    setUser(null);
+    setIsAuthenticated(false);
+  };
+
   useEffect(() => {
-    const loadUser = async () => {
-      const storedToken = localStorage.getItem('token');
+    // Tokens used to be stored here; remove any left over from older versions of the app
+    localStorage.removeItem('token');
 
-      if (!storedToken) {
-        setLoading(false);
-        return;
-      }
-
+    // Restore the session from the httpOnly refresh cookie
+    const restoreSession = async () => {
       try {
-        const res = await authAPI.getMe();
-
-        setUser(res.data.user);
-        setToken(storedToken);
-        setIsAuthenticated(true);
+        startSession(await authAPI.refresh());
       } catch (err) {
-        localStorage.removeItem('token');
-
-        setUser(null);
-        setToken(null);
-        setIsAuthenticated(false);
+        clearSession();
       } finally {
         setLoading(false);
       }
     };
 
-    loadUser();
+    restoreSession();
   }, []);
 
   const login = async (email, password) => {
@@ -48,13 +52,7 @@ export const AuthProvider = ({ children }) => {
     try {
       const res = await authAPI.login(email, password);
 
-      const newToken = res.data.token;
-
-      localStorage.setItem('token', newToken);
-
-      setToken(newToken);
-      setUser(res.data.user);
-      setIsAuthenticated(true);
+      startSession(res.data);
 
       return res.data;
     } catch (err) {
@@ -73,13 +71,7 @@ export const AuthProvider = ({ children }) => {
     try {
       const res = await authAPI.register(name, email, password);
 
-      const newToken = res.data.token;
-
-      localStorage.setItem('token', newToken);
-
-      setToken(newToken);
-      setUser(res.data.user);
-      setIsAuthenticated(true);
+      startSession(res.data);
 
       return res.data;
     } catch (err) {
@@ -92,12 +84,15 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  const logout = () => {
-    localStorage.removeItem('token');
+  const logout = async () => {
+    clearSession();
 
-    setUser(null);
-    setToken(null);
-    setIsAuthenticated(false);
+    try {
+      // Revokes the refresh token server-side and clears the cookie
+      await authAPI.logout();
+    } catch (err) {
+      // Local session is already cleared; the refresh token expires on its own
+    }
   };
 
   return (

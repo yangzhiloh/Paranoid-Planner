@@ -10,6 +10,7 @@ console.log('✓ PORT loaded:', !!process.env.PORT);
 
 const express = require('express');
 const cors = require('cors');
+const cookieParser = require('cookie-parser');
 
 const app = express();
 
@@ -29,6 +30,7 @@ if (!process.env.FRONTEND_URL) {
 // Configure middleware
 app.use(cors({ origin: allowedOrigin, credentials: true }));
 app.use(express.json());
+app.use(cookieParser());
 app.use(express.urlencoded({ extended: true }));
 // CSV imports arrive as raw text strings and JSON imports continue through express.json().
 app.use('/api/modules/import', express.text({ type: ['text/csv', 'application/csv'] }));
@@ -102,6 +104,8 @@ const startServer = async () => {
       console.log(`\nAvailable endpoints:`);
       console.log(`  POST   /api/auth/register`);
       console.log(`  POST   /api/auth/login`);
+      console.log(`  POST   /api/auth/refresh`);
+      console.log(`  POST   /api/auth/logout`);
       console.log(`  GET    /api/auth/me`);
       console.log(`  GET    /api/settings`);
       console.log(`  PUT    /api/settings`);

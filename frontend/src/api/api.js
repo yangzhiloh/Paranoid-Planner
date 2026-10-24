@@ -1,20 +1,61 @@
 import axios from 'axios';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+// Defaults to same-origin /api: Vercel rewrites it to the backend in production and Vite proxies it in development,
+// which keeps the refresh cookie first-party.
+const API_URL = import.meta.env.VITE_API_URL || '/api';
 
 const api = axios.create({
   baseURL: API_URL,
+  // Send the httpOnly refresh cookie (equivalent of fetch's credentials: 'include')
+  withCredentials: true,
 });
+
+/* Access token
+ * Held in memory only (never localStorage) so injected scripts cannot read it from storage.
+ * It is lost on page reload and restored through refreshSession().
+ */
+let accessToken = null;
+
+export const setAccessToken = (token) => {
+  accessToken = token;
+};
+
+/* Refresh
+ * Concurrent callers share one in-flight request. Refresh tokens rotate on every use and a reused
+ * token revokes the whole session, so two parallel refreshes would log the user out.
+ */
+let refreshPromise = null;
+
+export const refreshSession = () => {
+  if (!refreshPromise) {
+    refreshPromise = api
+      .post('/auth/refresh')
+      .then((res) => {
+        setAccessToken(res.data.token);
+        return res.data;
+      })
+      .catch((err) => {
+        setAccessToken(null);
+        throw err;
+      })
+      .finally(() => {
+        refreshPromise = null;
+      });
+  }
+
+  return refreshPromise;
+};
+
+// Auth endpoints that must not trigger a refresh-and-retry on 401
+const NO_RETRY_PATHS = ['/auth/login', '/auth/register', '/auth/refresh', '/auth/logout'];
 
 /* Request interceptor
   * Automatically attach Authorization header when token exists.
   */
 api.interceptors.request.use(
   (config) => {
-    const token = localStorage.getItem('token');
-
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`;
+    if (accessToken) {
+      config.headers.Authorization = `Bearer ${accessToken}`;
     }
 
     return config;
@@ -22,28 +63,41 @@ api.interceptors.request.use(
   (error) => Promise.reject(error)
 );
 /* Response interceptor
- * - allows for logging 
- * - If a 401 error, token is removed and user is redirected to login.
+ * - allows for logging
+ * - On a 401, tries one refresh and retries the request.
+ * - If the refresh fails, the token is cleared and user is redirected to login.
  * - Re-throws error so caller code can handle specific UI msgs.
  */
 
 api.interceptors.response.use(
   (response) => response,
-  (error) => {
+  async (error) => {
+    const originalRequest = error.config;
+
+    if (
+      error.response?.status === 401
+      && originalRequest
+      && !originalRequest._retried
+      && !NO_RETRY_PATHS.includes(originalRequest.url)
+    ) {
+      originalRequest._retried = true;
+
+      try {
+        await refreshSession();
+        return api(originalRequest);
+      } catch {
+        if (!['/login', '/register'].includes(window.location.pathname)) {
+          window.location.href = '/login';
+        }
+      }
+    }
+
     console.error(' [API Error]', {
       status: error.response?.status,
       message: error.response?.data?.error || error.message,
       url: error.config?.url,
       method: error.config?.method,
     });
-
-    if (error.response?.status === 401) {
-      localStorage.removeItem('token');
-
-      if (window.location.pathname !== '/login') {
-          window.location.href = '/login';
-      }
-    }
 
     return Promise.reject(error);
   }
@@ -52,10 +106,10 @@ api.interceptors.response.use(
 /* Exported service helpers
  *
  * Each object groups related endpoints and returns the axios promise.
- * - authAPI: auth endpoints (register/login/getMe)
+ * - authAPI: auth endpoints (register/login/refresh/logout/getMe)
  * - modulesAPI: module CRUD and import eendpoints
  * - tasksAPI: task CRUD endpoints
- * 
+ *
  * - scheduleAPI: schedule endpoints
  * - productivityAPI: productivity  endpoint
  * - settingsAPI: settings endpoints
@@ -67,6 +121,12 @@ export const authAPI = {
 
   login: (email, password) =>
     api.post('/auth/login', { email, password }),
+
+  refresh: () =>
+    refreshSession(),
+
+  logout: () =>
+    api.post('/auth/logout'),
 
   getMe: () =>
     api.get('/auth/me'),

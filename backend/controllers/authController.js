@@ -1,22 +1,29 @@
 // Authentication Controller
-// Handles user registration, login, and profile retrieval
+// Handles user registration, login, session refresh, logout, and profile retrieval
 
 const crypto = require('crypto');
 const bcrypt = require('bcrypt');
-const jwt = require('jsonwebtoken');
 const pool = require('../config/db');
+const {
+  REFRESH_COOKIE_NAME,
+  generateAccessToken,
+  issueRefreshToken,
+  setRefreshCookie,
+  clearRefreshCookie,
+  rotateRefreshToken,
+  revokeRefreshToken,
+} = require('../services/tokenService');
 
 const BCRYPT_ROUNDS = 10;
 
 // Compared against when the email is unknown so login takes the same time either way.
 const DUMMY_PASSWORD_HASH = bcrypt.hashSync(crypto.randomBytes(32).toString('hex'), BCRYPT_ROUNDS);
 
-// Generate JWT token
-const generateToken = (userId) => {
-  return jwt.sign({ id: userId }, process.env.JWT_SECRET, {
-    algorithm: 'HS256',
-    expiresIn: process.env.JWT_EXPIRE || '7d',
-  });
+// Start a new session: set a refresh cookie in a new family and return a short-lived access token.
+const startSession = async (res, userId) => {
+  const refreshToken = await issueRefreshToken(userId);
+  setRefreshCookie(res, refreshToken);
+  return generateAccessToken(userId);
 };
 
 // Register a new user
@@ -51,8 +58,7 @@ const register = async (req, res) => {
 
     const newUser = result.rows[0];
 
-    // Generate token
-    const token = generateToken(newUser.id);
+    const token = await startSession(res, newUser.id);
 
     res.status(201).json({
       message: 'User registered successfully',
@@ -94,8 +100,7 @@ const login = async (req, res) => {
       return res.status(401).json({ error: 'Invalid email or password' });
     }
 
-    // Generate token
-    const token = generateToken(user.id);
+    const token = await startSession(res, user.id);
 
     res.json({
       message: 'Login successful',
@@ -109,6 +114,59 @@ const login = async (req, res) => {
   } catch (err) {
     console.error('Login error:', err.message);
     res.status(500).json({ error: 'Login failed' });
+  }
+};
+
+// Exchange the refresh cookie for a new access token and a rotated refresh cookie
+const refresh = async (req, res) => {
+  try {
+    const presentedToken = req.cookies?.[REFRESH_COOKIE_NAME];
+
+    if (!presentedToken) {
+      return res.status(401).json({ error: 'No refresh token provided' });
+    }
+
+    const rotated = await rotateRefreshToken(presentedToken);
+
+    if (!rotated) {
+      clearRefreshCookie(res);
+      return res.status(401).json({ error: 'Invalid refresh token' });
+    }
+
+    const result = await pool.query('SELECT id, name, email FROM users WHERE id = $1', [rotated.userId]);
+    const user = result.rows[0];
+
+    setRefreshCookie(res, rotated.refreshToken);
+
+    res.json({
+      message: 'Token refreshed',
+      token: generateAccessToken(user.id),
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+      },
+    });
+  } catch (err) {
+    console.error('Refresh error:', err.message);
+    res.status(500).json({ error: 'Token refresh failed' });
+  }
+};
+
+// Revoke the current refresh token and clear its cookie
+const logout = async (req, res) => {
+  try {
+    const presentedToken = req.cookies?.[REFRESH_COOKIE_NAME];
+
+    if (presentedToken) {
+      await revokeRefreshToken(presentedToken);
+    }
+
+    clearRefreshCookie(res);
+    res.json({ message: 'Logged out' });
+  } catch (err) {
+    console.error('Logout error:', err.message);
+    res.status(500).json({ error: 'Logout failed' });
   }
 };
 
@@ -142,5 +200,7 @@ const me = async (req, res) => {
 module.exports = {
   register,
   login,
+  refresh,
+  logout,
   me,
 };
