@@ -1,13 +1,20 @@
 // Authentication Controller
 // Handles user registration, login, and profile retrieval
 
+const crypto = require('crypto');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const pool = require('../config/db');
 
+const BCRYPT_ROUNDS = 10;
+
+// Compared against when the email is unknown so login takes the same time either way.
+const DUMMY_PASSWORD_HASH = bcrypt.hashSync(crypto.randomBytes(32).toString('hex'), BCRYPT_ROUNDS);
+
 // Generate JWT token
 const generateToken = (userId) => {
   return jwt.sign({ id: userId }, process.env.JWT_SECRET, {
+    algorithm: 'HS256',
     expiresIn: process.env.JWT_EXPIRE || '7d',
   });
 };
@@ -15,12 +22,6 @@ const generateToken = (userId) => {
 // Register a new user
 const register = async (req, res) => {
   try {
-    console.log('[Register Endpoint] Received request with body:', {
-      email: req.body.email,
-      name: req.body.name,
-      hasPassword: !!req.body.password,
-    });
-
     const { email, name, password } = req.body;
 
     // Validate input
@@ -40,7 +41,7 @@ const register = async (req, res) => {
     }
 
     // Hash password
-    const hashedPassword = await bcrypt.hash(password, 10);
+    const hashedPassword = await bcrypt.hash(password, BCRYPT_ROUNDS);
 
     // Insert user into database
     const result = await pool.query(
@@ -63,7 +64,7 @@ const register = async (req, res) => {
       },
     });
   } catch (err) {
-    console.error('Registration error:', err);
+    console.error('Registration error:', err.message);
     res.status(500).json({ error: 'Registration failed' });
   }
 };
@@ -81,16 +82,15 @@ const login = async (req, res) => {
     // Find user by email
     const result = await pool.query('SELECT id, name, email, password_hash FROM users WHERE email = $1', [email]);
 
-    if (result.rows.length === 0) {
-      return res.status(401).json({ error: 'Invalid email or password' });
-    }
-
     const user = result.rows[0];
 
-    // Compare password with hash
-    const isPasswordValid = await bcrypt.compare(password, user.password_hash);
+    // Always run bcrypt, even for unknown emails, so response time does not reveal which emails exist
+    const isPasswordValid = await bcrypt.compare(
+      String(password),
+      user ? user.password_hash : DUMMY_PASSWORD_HASH
+    );
 
-    if (!isPasswordValid) {
+    if (!user || !isPasswordValid) {
       return res.status(401).json({ error: 'Invalid email or password' });
     }
 
@@ -107,7 +107,7 @@ const login = async (req, res) => {
       },
     });
   } catch (err) {
-    console.error('Login error:', err);
+    console.error('Login error:', err.message);
     res.status(500).json({ error: 'Login failed' });
   }
 };
@@ -134,7 +134,7 @@ const me = async (req, res) => {
       user,
     });
   } catch (err) {
-    console.error('Get user error:', err);
+    console.error('Get user error:', err.message);
     res.status(500).json({ error: 'Failed to retrieve user information' });
   }
 };

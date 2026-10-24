@@ -13,8 +13,21 @@ const cors = require('cors');
 
 const app = express();
 
+// Number of reverse proxies in front of the app (Render, plus Vercel when proxied through its rewrite),
+// so req.ip is the real client IP for rate limiting.
+app.set('trust proxy', Number(process.env.TRUST_PROXY ?? 1));
+
+// Only the configured frontend may make credentialed cross-origin requests.
+// Without FRONTEND_URL, allow the local Vite dev server outside production and no origins in production.
+const allowedOrigin = process.env.FRONTEND_URL?.replace(/\/+$/, '')
+  || (process.env.NODE_ENV === 'production' ? false : 'http://localhost:5173');
+
+if (!process.env.FRONTEND_URL) {
+  console.warn('FRONTEND_URL is not set; CORS allows:', allowedOrigin || 'no cross-origin requests');
+}
+
 // Configure middleware
-app.use(cors());
+app.use(cors({ origin: allowedOrigin, credentials: true }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 // CSV imports arrive as raw text strings and JSON imports continue through express.json().
@@ -73,6 +86,12 @@ const PORT = process.env.PORT || 5000;
 const NODE_ENV = process.env.NODE_ENV || 'development';
 
 const startServer = async () => {
+  if (!process.env.JWT_SECRET) {
+    console.error('JWT_SECRET must be set');
+    process.exitCode = 1;
+    return;
+  }
+
   try {
     // simple logging to confirm server is active
     await runMigrations(pool);
@@ -94,6 +113,9 @@ const startServer = async () => {
   }
 };
 
-startServer();
+// Tests import the app without starting the server
+if (require.main === module) {
+  startServer();
+}
 
 module.exports = app;

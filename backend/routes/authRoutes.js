@@ -1,23 +1,19 @@
 // Authentication Routes
 // POST /api/auth/register - Register a new user
-// POST /api/auth/login - Login user
+// POST /api/auth/login - Login user (rate limited)
 // GET /api/auth/me - Get current user info (requires auth)
 
 const express = require('express');
 const router = express.Router();
 const authController = require('../controllers/authController');
 const authMiddleware = require('../middleware/authMiddleware');
-
-console.log('✓ [Routes] Loading authentication routes...');
+const { loginLimiter } = require('../middleware/rateLimiters');
 
 // Register new user
-router.post('/register', (req, res, next) => {
-  console.log('📨 [Route] POST /api/auth/register received');
-  authController.register(req, res);
-});
+router.post('/register', authController.register);
 
 // Login user
-router.post('/login', authController.login);
+router.post('/login', loginLimiter, authController.login);
 
 // Get current user info (requires authentication)
 router.get('/me', authMiddleware, authController.me);
