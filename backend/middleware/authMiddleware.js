@@ -13,13 +13,14 @@ const authMiddleware = (req, res, next) => {
       return res.status(401).json({ error: 'No authorization header provided' });
     }
 
-    // Remove "Bearer " prefix
-    const token = authHeader.startsWith('Bearer ')
-      ? authHeader.slice(7)
-      : authHeader;
+    if (!authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'Invalid token' });
+    }
 
-    // Verify the token using JWT_SECRET
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const token = authHeader.slice(7);
+
+    // Only accept HS256 so tokens signed with any other algorithm (including "none") are rejected
+    const decoded = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
 
     // Attach decoded user data to request object
     req.user = decoded;
